@@ -122,4 +122,5 @@ Started 2026-09-04 ~19:40 (Europe/Istanbul) by reading the refreshed docs (quick
 
 ## Social
 
-X thread tagging @terminal3io and @SuperteamEarn — draft text in `docs/X_POST.md`; the link is added to this document once posted.
+X thread tagging @terminal3io and @SuperteamEarn:
+https://x.com/Hllerdgn80/status/2095961225007886445 (text in `docs/X_POST.md`).
