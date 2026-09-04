@@ -1,0 +1,6 @@
+$ kyb authorize
+agent DID did:t3n:07974b90cb13c1e659db9a9bbb74ea825e2f63c0 (session)
+data owner DID did:t3n:07974b90cb13c1e659db9a9bbb74ea825e2f63c0
+granted screen-vendor, submit-onboarding on z:07974b90cb13c1e659db9a9bbb74ea825e2f63c0:kyb (versionReq 0.1.0) to did:t3n:07974b90cb13c1e659db9a9bbb74ea825e2f63c0
+allowedHosts: ec.europa.eu, api.gleif.org, httpbin.org
+(first attempt with a separate, unfunded user identity failed: InsufficientCredit account=3a8281aa… required=10000000000 available=0)

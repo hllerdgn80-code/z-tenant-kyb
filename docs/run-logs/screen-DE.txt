@@ -1,0 +1,30 @@
+$ kyb screen --country DE --vat 000000000 --name "Nonexistent GmbH"
+screen-vendor on z:07974b90cb13c1e659db9a9bbb74ea825e2f63c0:kyb@0.1.0 as did:t3n:07974b90cb13c1e659db9a9bbb74ea825e2f63c0 for did:t3n:07974b90cb13c1e659db9a9bbb74ea825e2f63c0
+{
+  "contract_version": "0.1.0",
+  "country_code": "DE",
+  "vat_number": "000000000",
+  "vat": {
+    "checked": true,
+    "valid": false,
+    "name": null,
+    "address": null,
+    "request_date": "2026-09-04T18:03:59.712Z",
+    "error": null
+  },
+  "lei": {
+    "checked": true,
+    "found": false,
+    "lei": null,
+    "legal_name": null,
+    "entity_status": null,
+    "registration_status": null,
+    "country": null,
+    "error": null
+  },
+  "risk_flags": [
+    "VAT_INVALID",
+    "LEI_NOT_FOUND"
+  ],
+  "screened_at": 1788545039
+}

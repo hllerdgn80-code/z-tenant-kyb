@@ -49,7 +49,7 @@ export function nodeUrlFor(cfg: Config): string {
   return getNodeUrl();
 }
 
-/** Fields of SignedTrustManifest in SDK 5.10.0's d.ts — what fetchTrustedManifest validates against. */
+/** Fields of SignedTrustManifest in SDK >= 5.3.0's d.ts (5.2.0 does not require rtmr1_allowlist). */
 export const MANIFEST_FIELDS = ["cluster", "version", "peer_ids", "rtmr3_allowlist", "rtmr1_allowlist", "signed_at", "signature"] as const;
 
 export interface ManifestReport {

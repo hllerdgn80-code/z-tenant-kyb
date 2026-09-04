@@ -1,0 +1,12 @@
+$ kyb logs
+2026-09-04T17:56:15.023Z info  VIES DE143593636: valid=false err=None
+2026-09-04T17:56:15.023Z info  GLEIF found=true status=Some("ISSUED") err=None
+2026-09-04T17:57:20.131Z info  VIES IE6388047V: valid=true err=None
+2026-09-04T17:57:20.131Z info  GLEIF found=true status=Some("ISSUED") err=None
+2026-09-04T17:57:28.276Z info  onboarding vendor_id=V-GOOGLE-IE screening_ref=scr-2026-09-04-001 include_email=false
+2026-09-04T18:03:30.372Z info  VIES IE6388047V: valid=true err=None
+2026-09-04T18:03:30.372Z info  GLEIF found=true status=Some("ISSUED") err=None
+2026-09-04T18:03:59.071Z info  VIES DE000000000: valid=false err=None
+2026-09-04T18:03:59.071Z info  GLEIF found=false status=None err=None
+2026-09-04T18:04:28.232Z info  onboarding vendor_id=V-GOOGLE-IE screening_ref=scr-2026-09-04-001 include_email=false
+next_seq 9

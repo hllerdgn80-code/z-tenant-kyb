@@ -27,7 +27,7 @@ interface DoctorOptions {
   timeout: number;
 }
 
-const EXPECTED_SDK = "5.10.0";
+const EXPECTED_SDK = "5.2.0"; // last version whose fetchTrustedManifest() accepts testnet's manifest (5.3.0+ require rtmr1_allowlist — DISCREPANCIES.md #1)
 const VIES_URL = "https://ec.europa.eu/taxation_customs/vies/rest-api/check-vat-number";
 /** Google Ireland Limited: validates with a name. (DE numbers validate without a name, and DE143593636 reported valid=false on 2026-09-04.) */
 const VIES_PROBE = { countryCode: "IE", vatNumber: "6388047V" } as const;
@@ -159,11 +159,11 @@ async function manifestCheck(cfg: Config, timeoutMs: number): Promise<Check> {
     const r = await inspectManifest(nodeUrlFor(cfg), timeoutMs);
     const meta = `version ${r.version ?? "?"}, signed ${r.signedAt ?? "?"}`;
     if (r.missing.length === 0) return check("trust manifest", "ok", `${r.url} (${meta}) has every field SDK ${EXPECTED_SDK} requires`);
-    const status: Status = cfg.trust === "manifest" ? "fail" : "warn";
+    const status: Status = "warn"; // pinned SDK 5.2.0 accepts this manifest; it only breaks after an SDK upgrade
     return check(
       "trust manifest",
       status,
-      `${r.url} (${meta}) lacks ${r.missing.join(", ")} — fetchTrustedManifest() in SDK ${EXPECTED_SDK} rejects it as malformed. ${cfg.trust === "manifest" ? "Every session command will fail; set T3N_TRUST=unsafe on testnet (never on production) — see DISCREPANCIES.md #1" : `T3N_TRUST=${cfg.trust} works around it`}`,
+      `${r.url} (${meta}) lacks ${r.missing.join(", ")} — SDK >= 5.3.0 rejects it as malformed (this CLI pins ${EXPECTED_SDK}, the last version that accepts it). ${cfg.trust === "manifest" ? "If you upgrade the SDK every session command will fail until the node publishes rtmr1_allowlist — see DISCREPANCIES.md #1" : `T3N_TRUST=${cfg.trust} skips the check`}`,
     );
   } catch (e) {
     return check("trust manifest", "fail", explainError(e, secretsOf(cfg)));

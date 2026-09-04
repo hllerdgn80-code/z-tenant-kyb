@@ -28,6 +28,13 @@ blockers or near-blockers; the rest are paper cuts that cost time.
 - What does work: `{ unsafe_trust_server: true }` — handshake completes in ~1 s. The node itself is healthy
   (`/status` → 200). So the fix is on the operator side (publish a manifest with `rtmr1_allowlist`) or in the
   SDK (accept manifests that predate the field, as `manifestToTrustAnchor` already does).
+- **Regression bisected (2026-09-04):** `fetchTrustedManifest("testnet")` succeeds on **5.2.0** (returns
+  `expected_peer_ids, rtmr3_allowlist, source`) and fails on **5.3.0, 5.4.0, 5.5.0, 5.8.0, 5.10.0** with the same
+  "malformed" error. So the breaking change shipped in 5.3.0 (2026-08-28), one day after the manifest was signed.
+  The CLI therefore pins **5.2.0** and keeps verified attestation (`T3N_TRUST=manifest`); `unsafe` stays a debug switch.
+- **Live confirmation with 5.2.0:** tenant handshake+auth, `contracts.register` (contract_id 879), `maps.create/entrySet`,
+  the `agent-auth-update` grant, `screen-vendor` (VIES + GLEIF called from inside the enclave) and `submit-onboarding`
+  (placeholders resolved, ERP echo HTTP 200) all succeeded on testnet on 2026-09-04.
 - CLI: `T3N_TRUST=manifest` (default, strict) vs `T3N_TRUST=unsafe` (explicit, logged, refused on production);
   `kyb doctor` reports the missing fields.
 

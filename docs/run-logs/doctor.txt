@@ -1,0 +1,23 @@
+$ kyb doctor
+kyb doctor — env testnet, trust manifest, node https://cn-api.sg.testnet.t3n.terminal3.io
+
+  ok   node                v26.7.0
+  ok   sdk                 @terminal3/t3n-sdk 5.2.0
+  ok   wasm                target/wasm32-wasip2/release/z_tenant_kyb.wasm — 154.1 KB, WASM component (layer 1)
+  ok   T3N_API_KEY         set (66 chars), eth-private-key
+  ok   AGENT_KEY           set (66 chars), eth-private-key
+  ok   USER_KEY            set (66 chars), eth-private-key
+ warn  AGENT_KEY           equals T3N_API_KEY — the agent must be its own identity with its own credits
+  ok   ERP_ONBOARDING_URL  https://httpbin.org/post (allowed host: httpbin.org)
+ skip  ERP_API_KEY         not set — optional bearer for the ERP
+  ok   contract            z:07974b90cb13c1e659db9a9bbb74ea825e2f63c0:kyb @ 0.1.0 on testnet
+  ok   vies                IE6388047V valid=true name=GOOGLE IRELAND LIMITED
+  ok   gleif               SAP SE → LEI 529900D6BF99LW9R2E68
+  ok   t3n node            https://cn-api.sg.testnet.t3n.terminal3.io/status → HTTP 200
+ warn  trust manifest      https://cn-api.sg.testnet.t3n.terminal3.io/api/trust-manifest (version 1787800421, signed 2026-08-27T03:13:41Z) lacks rtmr1_allowlist — SDK >= 5.3.0 rejects it as malformed (this CLI pins 5.2.0, the last version that accepts it). If you upgrade the SDK every session command will fail until the node publishes rtmr1_allowlist — see DISCREPANCIES.md #1
+  ok   tenant session      DID did:t3n:07974b90cb13c1e659db9a9bbb74ea825e2f63c0
+  ok   tenant admitted     tenant.me() → status active
+  ok   agent session       DID did:t3n:07974b90cb13c1e659db9a9bbb74ea825e2f63c0
+  ok   user session        DID did:t3n:07974b90cb13c1e659db9a9bbb74ea825e2f63c0
+
+summary: 15 ok, 2 warn, 0 failed, 1 skipped → exit 0

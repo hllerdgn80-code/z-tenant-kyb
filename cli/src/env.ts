@@ -15,7 +15,7 @@ export type T3nEnv = (typeof T3N_ENVS)[number];
 /**
  * How the node attestation is pinned (T3N_TRUST):
  *  - manifest: fetchTrustedManifest() — operator-signed and verified. Default; the only mode allowed on production.
- *  - unsafe:   { unsafe_trust_server: true } — no attestation check. The only way to reach testnet with SDK 5.10.0
+ *  - unsafe:   { unsafe_trust_server: true } — no attestation check. The only way to reach testnet with SDK >= 5.3.0 (this CLI pins 5.2.0 instead)
  *              while its served manifest lacks rtmr1_allowlist (2026-09-04); see DISCREPANCIES.md #1.
  */
 export const TRUST_MODES = ["manifest", "unsafe"] as const;

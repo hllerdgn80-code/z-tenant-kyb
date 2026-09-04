@@ -1,0 +1,30 @@
+$ cargo test --target x86_64-apple-darwin --lib
+test common::tests::helpers_validate_shapes ... ok
+test common::tests::name_normalisation_ignores_suffixes_and_case ... ok
+test common::tests::parse_input_rejects_non_object_and_bad_json ... ok
+test common::tests::vat_cleaning_strips_prefix_and_noise ... ok
+test common::tests::pii_guard_normalises_spelling_and_matches_fragments ... ok
+test common::tests::parse_input_rejects_pii_with_precise_message ... ok
+test common::tests::pii_guard_catches_top_level_and_nested_keys ... ok
+test onboard::tests::erp_body_carries_only_unresolved_markers ... ok
+test onboard::tests::native_entry_point_returns_wasm_only_error ... ok
+test onboard::tests::reference_extraction_prefers_ids_and_never_echoes_body ... ok
+test onboard::tests::parsing_requires_ids_and_rejects_inline_pii ... ok
+test screen::tests::native_entry_point_returns_wasm_only_error ... ok
+test screen::tests::gleif_parsing_handles_list_single_and_404 ... ok
+test screen::tests::request_parsing_normalises_and_validates ... ok
+test screen::tests::output_never_carries_person_fields ... ok
+test screen::tests::risk_flags_clean_vendor_has_none ... ok
+test screen::tests::risk_flags_detect_invalid_vat_lapsed_lei_name_and_country_mismatch ... ok
+test tests::contract_version_is_semver ... ok
+test screen::tests::vies_parsing_covers_valid_invalid_and_unavailable ... ok
+test result: ok. 19 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
+$ cargo build --target wasm32-wasip2 --release && wasm-tools component wit target/wasm32-wasip2/release/z_tenant_kyb.wasm
+157768 bytes
+  import host:tenant/tenant-context@1.0.0;
+  import host:interfaces/logging@2.1.0;
+  import host:interfaces/kv-store@2.1.0;
+  import host:interfaces/http@2.1.0;
+  import host:interfaces/http-with-placeholders@2.1.0;
+  export z:tenant-kyb/contracts@0.1.0;

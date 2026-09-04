@@ -16,7 +16,7 @@ interface AuditOptions {
 export async function audit(cfg: Config, opts: AuditOptions): Promise<void> {
   if (!(opts.as in ROLES)) throw new Error(`--as must be one of ${Object.keys(ROLES).join(" | ")}`);
   const s = await openSession(cfg, ROLES[opts.as as Role]);
-  // The docs call this API unverified; the 5.10.0 d.ts declares it — guard at runtime rather than trust either.
+  // The docs call this API unverified; the SDK d.ts (5.2.0 and 5.10.0) declares it — guard at runtime rather than trust either.
   const probe = s.t3n as unknown as { getAuditEvents?: unknown };
   if (typeof probe.getAuditEvents !== "function") {
     throw new Error("this @terminal3/t3n-sdk build does not expose T3nClient.getAuditEvents — the audit read is not available with the installed SDK");

@@ -1,0 +1,7 @@
+$ kyb onboard --vendor-id V-GOOGLE-IE --screening-ref scr-2026-09-04-001 --notes "screened via VIES and GLEIF"
+submit-onboarding on z:07974b90cb13c1e659db9a9bbb74ea825e2f63c0:kyb@0.1.0 as did:t3n:07974b90cb13c1e659db9a9bbb74ea825e2f63c0 for did:t3n:07974b90cb13c1e659db9a9bbb74ea825e2f63c0
+{
+  "status": "submitted",
+  "erp_reference": "Root=1-6a9b082d-6156520f13781b5762254925",
+  "http_code": 200
+}

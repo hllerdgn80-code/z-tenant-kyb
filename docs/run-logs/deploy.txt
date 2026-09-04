@@ -1,0 +1,5 @@
+$ kyb deploy (2026-09-04, first run)
+tenant DID did:t3n:07974b90cb13c1e659db9a9bbb74ea825e2f63c0 (node https://cn-api.sg.testnet.t3n.terminal3.io)
+registered z:07974b90cb13c1e659db9a9bbb74ea825e2f63c0:kyb @ 0.1.0 → contract_id 879
+created private map secrets (readers/writers: contract_id 879)
+seeded erp_onboarding_url → https://httpbin.org/post

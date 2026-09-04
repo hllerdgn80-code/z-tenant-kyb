@@ -1,0 +1,6 @@
+$ kyb audit
+audit trail read as agent did:t3n:07974b90cb13c1e659db9a9bbb74ea825e2f63c0
+{
+  "batches": [],
+  "next_cursor": null
+}

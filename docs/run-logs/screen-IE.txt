@@ -1,0 +1,27 @@
+$ kyb screen --country IE --vat 6388047V --name "Google Ireland Limited"
+screen-vendor on z:07974b90cb13c1e659db9a9bbb74ea825e2f63c0:kyb@0.1.0 as did:t3n:07974b90cb13c1e659db9a9bbb74ea825e2f63c0 for did:t3n:07974b90cb13c1e659db9a9bbb74ea825e2f63c0
+{
+  "contract_version": "0.1.0",
+  "country_code": "IE",
+  "vat_number": "6388047V",
+  "vat": {
+    "checked": true,
+    "valid": true,
+    "name": "GOOGLE IRELAND LIMITED",
+    "address": "3RD FLOOR, GORDON HOUSE, BARROW STREET, DUBLIN 4",
+    "request_date": "2026-09-04T18:03:31.170Z",
+    "error": null
+  },
+  "lei": {
+    "checked": true,
+    "found": true,
+    "lei": "YYPPRNO5HB304LHFVG31",
+    "legal_name": "GOOGLE IRELAND LIMITED",
+    "entity_status": "ACTIVE",
+    "registration_status": "ISSUED",
+    "country": "IE",
+    "error": null
+  },
+  "risk_flags": [],
+  "screened_at": 1788545010
+}

@@ -12,7 +12,7 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@terminal3/t3n-sdk": "5.10.0",
+    "@terminal3/t3n-sdk": "5.2.0",
     "commander": "^15.0.0"
   },
   "devDependencies": {

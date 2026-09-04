@@ -1,6 +1,6 @@
 # z-tenant-kyb operator CLI
 
-Thin, typed command-line tool around `@terminal3/t3n-sdk` **5.10.0** for operating the
+Thin, typed command-line tool around `@terminal3/t3n-sdk` **5.2.0** (pinned — see "SDK pin" below) for operating the
 `z-tenant-kyb` TEE contract (vendor KYB: key-less EU VIES + GLEIF screening inside the enclave,
 and PII-safe ERP onboarding through `{{profile.*}}` placeholders). It is the "distribute / host"
 half of the bounty: everything an operator does after `cargo build` lives here.
@@ -75,7 +75,7 @@ be private keys (the session flow needs them).
 ### `doctor [--offline] [--timeout <ms>]`
 Toolchain (Node ≥ 20.12, SDK version), WASM artifact (exists, size, is a **component**, layer 1),
 env vars (masked, with key kind), then online: VIES (`IE6388047V → valid=true`), GLEIF (`SAP SE` → LEI),
-node `/status`, the served **trust manifest vs the fields SDK 5.10.0 requires**, and handshake +
+node `/status`, the served **trust manifest vs the fields SDK >= 5.3.0 requires**, and handshake +
 authenticate for every configured key (tenant additionally calls `tenant.me()`). Exit 1 on any failure.
 
 ### `deploy [--dry-run] [--claim] [--contract-id <n>]`
@@ -128,7 +128,7 @@ has no profile to substitute (`PlaceholderNoUserContext`).
 ## `T3N_TRUST` — attestation pinning
 
 The quickstart pins the node's attestation with `fetchTrustedManifest(env)`. **On 2026-09-04 testnet served a
-manifest without `rtmr1_allowlist`**, which SDK 5.10.0 rejects (`Trust manifest at …/api/trust-manifest is malformed`),
+manifest without `rtmr1_allowlist`**, which SDK >= 5.3.0 rejects (`Trust manifest at …/api/trust-manifest is malformed`) — verified on 5.3.0, 5.4.0, 5.5.0, 5.8.0 and 5.10.0, while 5.2.0 accepts it, so the CLI pins 5.2.0,
 so every session command fails under the default `T3N_TRUST=manifest`. `kyb doctor` shows exactly which
 fields are missing. Until the manifest or the SDK is fixed, `T3N_TRUST=unsafe` (= `{ unsafe_trust_server: true }`)
 is the only way through; it disables attestation verification, prints one warning per run, and is
@@ -146,7 +146,7 @@ refused when `T3N_ENV=production`. Details and evidence in `DISCREPANCIES.md` #1
   Delete it to start clean; `deploy`/`authorize` rebuild it.
 - **Errors**: `src/errors.ts` maps known `detail` substrings from `common-errors.md` and the SDK d.ts to hints and
   prints `request_id` when the node returns one — quote it when reporting.
-- **SDK upgrades**: `doctor` warns when the installed SDK is not 5.10.0. The SDK bundle is obfuscated, so wire
+- **SDK pin**: `package.json` pins `@terminal3/t3n-sdk` **5.2.0**, the last release whose `fetchTrustedManifest()` accepts the testnet manifest (no `rtmr1_allowlist`). Upgrade to >= 5.3.0 as soon as the node publishes `rtmr1_allowlist`; `doctor` warns when the installed SDK is not the pinned one. The SDK bundle is obfuscated, so wire
   shapes can only be checked against `dist/index.d.ts`; re-read `DISCREPANCIES.md` after an upgrade.
 - **Verified offline** (no keys): typecheck, `doctor --offline`, `doctor` (VIES/GLEIF/node/manifest reachability),
   all `--dry-run` paths, every "missing key / missing state" error path.
