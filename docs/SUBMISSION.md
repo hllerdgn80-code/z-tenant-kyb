@@ -1,6 +1,6 @@
 # z-tenant-kyb -- a vendor KYB onboarding agent built on the new T3N ADK docs
 
-*(Paste into the public Google Doc. Replace the bracketed placeholders.)*
+*(Google Doc text — mirrors docs/SUBMISSION.md in the repo.)*
 
 ## Summary
 
@@ -68,19 +68,24 @@ Where the docs and the shipped artefacts disagreed we followed the artefacts (WI
 
 ## Screenshots
 
-*(Attach in this order; each caption tells the judge what to look for.)*
+All captured on 2026-09-04 against **testnet** (node `cn-api.sg.testnet.t3n.terminal3.io`) with the tenant key claimed from the ADK community page. Text logs are in `docs/run-logs/`, rendered images in `docs/screenshots/`.
 
-- [ ] `npx tsx src/index.ts doctor` -- toolchain + env check, secrets masked
-- [ ] `cargo test --target x86_64-apple-darwin --lib` -- `19 passed; 0 failed`
-- [ ] `cargo build --target wasm32-wasip2 --release` + `ls -la target/wasm32-wasip2/release/z_tenant_kyb.wasm` (~154 KB)
-- [ ] `wasm-tools component wit target/wasm32-wasip2/release/z_tenant_kyb.wasm` -- the five `host:*` imports and the `z:tenant-kyb/contracts@0.1.0` export
-- [ ] If testnet accepted the SDK: `kyb deploy` (contract_id / name), `kyb authorize`, `kyb screen --country IE --vat 6388047V --name "Google Ireland Limited"` output with `risk_flags: []`, `kyb onboard` output, `kyb logs`
-- [ ] Otherwise: `kyb deploy --dry-run` and `kyb screen --dry-run` output, plus the exact error text from the live attempt with its `request_id` as evidence for the bug report -- we have `InsufficientCredit` on `tenant.me()` (request_id `fe3d0e55-16ec-4636-b99f-ed8e4eea7ff3`) and the execute dispatch reaching contract-id validation (request_id `6d25b431-8e2e-41cf-a0f3-5c05f37c4c6b`) under `T3N_TRUST=unsafe`
-- [ ] The GitHub repo page showing the public visibility and the docs folder
+1. `kyb doctor` — toolchain, WASM component check, VIES/GLEIF reachability, node `/status`, trust-manifest field check (warns: `rtmr1_allowlist` missing), tenant/agent/user sessions authenticated, tenant admitted — `15 ok, 2 warn, 0 failed`.
+2. `cargo test --target x86_64-apple-darwin --lib` — all native tests pass; `cargo build --target wasm32-wasip2 --release` — 153 KB component; `wasm-tools component wit` — the five `host:*` imports and the `z:tenant-kyb/contracts@0.1.0` export.
+3. `kyb deploy` — `registered z:07974b90…:kyb @ 0.1.0 → contract_id 879`, private `secrets` map created with `{ only: [879] }` ACL, `erp_onboarding_url` seeded.
+4. `kyb authorize` — `agent-auth-update` grant for `screen-vendor`, `submit-onboarding`, allowedHosts `ec.europa.eu, api.gleif.org, httpbin.org`. (First attempt with a separate, unfunded user identity: `InsufficientCredit … available=0` — see bugs.)
+5. `kyb screen --country IE --vat 6388047V --name "Google Ireland Limited"` — executed inside the enclave: VIES `valid=true`, GLEIF LEI `YYPPRNO5HB304LHFVG31`, `risk_flags: []`.
+6. `kyb screen --country DE --vat 000000000 --name "Nonexistent GmbH"` — `risk_flags: ["VAT_INVALID", "LEI_NOT_FOUND"]`.
+7. `kyb onboard --vendor-id V-GOOGLE-IE --screening-ref scr-2026-09-04-001` — `{{profile.first_name}}`/`{{profile.last_name}}` resolved host-side, ERP POST → `status: submitted, http_code: 200, erp_reference: Root=1-…` (the ERP echo body is never returned to the caller).
+8. `kyb logs` — contract log lines from inside the TEE (no PII), `kyb audit` — audit read as the agent.
+9. GitHub repo page (public) with the `docs/` folder.
 
 ## Bugs and doc issues faced (short)
 
 Full list with file/line evidence and suggested fix text in `docs/BUGS.md`. Headlines:
+
+0. **SDK ≥ 5.3.0 cannot open a session on testnet** — `fetchTrustedManifest("testnet")` rejects the served trust manifest (version 1787800421, signed 2026-08-27) because it has no `rtmr1_allowlist`. Bisected: 5.2.0 works, 5.3.0 / 5.4.0 / 5.5.0 / 5.8.0 / 5.10.0 fail with the same "malformed" error. Every documented flow (quickstart onward) fails at step one on the latest SDK; our CLI pins 5.2.0 and keeps verified attestation. Fix: publish `rtmr1_allowlist` in the testnet manifest, or let the SDK accept manifests that predate the field (as `manifestToTrustAnchor` already does). Details: `cli/DISCREPANCIES.md` #1.
+0b. **Separate agent/user identities start with 0 credits and the claim page issues one key per Google account** — the docs say "get the agent its own key from the claim page", but the page is Google-SSO only and rate-limited to one signup per e-mail, so a second identity cannot be funded without a second Google account or a manual top-up (`InsufficientCredit … required=10000000000 available=0`, request_id `d0198fc4-b543-4cbf-a25c-41c3ff0cb600`). We used the documented self-grant path for the demo.
 
 1. The reference contract and the placeholder guide use the nested marker
    `{{profile.verified_contacts.email.value}}`, but the host WIT shipped with it says
@@ -111,9 +116,7 @@ with fixture tests for every parser, one secret to change to point at a real ERP
 
 ## Time to submit
 
-Started [DATE/TIME], submitted [DATE/TIME] -- about [N] hours from reading the
-quickstart to this document, including the bug write-up. The contract and tests were
-finished first; the remaining time went into the CLI's dry-run path and the docs.
+Started 2026-09-04 ~19:40 (Europe/Istanbul) by reading the refreshed docs (quickstart → walkthrough → tips → reference); contract, CLI, live testnet run, docs and bug report were finished the same evening (~4 hours), submitted 2026-09-04/05. Work was done with an AI coding assistant driving the ADK docs (llms.txt + .md pages) end to end.
 
 ## Social
 
