@@ -4,29 +4,43 @@ use alloc::format;
 use alloc::string::{String, ToString};
 use alloc::vec::Vec;
 
-/// Person-level fields that must never be passed to this contract inline.
-/// The signatory's identity reaches the ERP only through `{{profile.*}}` markers.
+/// Person-level key names that must never be passed to this contract inline.
+/// Compared after [`normalise_key`] (lower-case, `_`/`-`/space/`.` removed), so
+/// `firstName`, `FIRST-NAME` and `first_name` are the same key. The signatory's
+/// identity reaches the ERP only through `{{profile.*}}` markers.
 pub const PII_KEYS: &[&str] = &[
-    "first_name",
-    "last_name",
-    "given_name",
-    "family_name",
-    "full_name",
-    "email",
-    "e_mail",
-    "phone",
-    "phone_number",
-    "date_of_birth",
-    "born_on",
-    "dob",
-    "passport",
-    "passport_number",
-    "national_id",
-    "ssn",
-    "iban",
-    "address_line",
-    "home_address",
+    "firstname", "lastname", "givenname", "familyname", "middlename", "maidenname",
+    "fullname", "personname", "signatoryname", "contactname",
+    "mobile", "mobileno", "tel",
+    "dob", "dateofbirth", "bornon",
+    "ssn", "socialsecuritynumber", "nationalid", "nationalidnumber", "idnumber",
+    "addressline", "homeaddress", "residentialaddress", "privateaddress",
 ];
+
+/// Fragments that mark a key as person-level wherever they occur in the
+/// normalised key: `contact_email`, `emailAddress`, `passportNo`, `birthdate`,
+/// `telephone`, `iban_number` are all rejected.
+pub const PII_FRAGMENTS: &[&str] = &["email", "phone", "passport", "birth", "iban"];
+
+/// Contract flags that contain a fragment but carry no data.
+const NOT_PII_KEYS: &[&str] = &["includeemail"];
+
+/// Lower-case and drop the separators people use between words in a key.
+pub fn normalise_key(k: &str) -> String {
+    k.chars()
+        .filter(|c| !matches!(c, '_' | '-' | ' ' | '.'))
+        .map(|c| c.to_ascii_lowercase())
+        .collect()
+}
+
+/// Does this key name look like personal data? Names only — values are never inspected.
+pub fn is_pii_key(k: &str) -> bool {
+    let nk = normalise_key(k);
+    if NOT_PII_KEYS.contains(&nk.as_str()) {
+        return false;
+    }
+    PII_KEYS.contains(&nk.as_str()) || PII_FRAGMENTS.iter().any(|f| nk.contains(f))
+}
 
 /// Reject any top-level (or nested) object key that looks like personal data.
 /// Returns the offending key so the caller can produce a precise error.
@@ -34,8 +48,7 @@ pub fn find_pii_key(v: &serde_json::Value) -> Option<String> {
     match v {
         serde_json::Value::Object(map) => {
             for (k, child) in map {
-                let lk = k.to_ascii_lowercase();
-                if PII_KEYS.iter().any(|p| lk == *p) {
+                if is_pii_key(k) {
                     return Some(k.clone());
                 }
                 if let Some(hit) = find_pii_key(child) {
@@ -153,6 +166,25 @@ mod tests {
             find_pii_key(&json!({"contacts": [{"phone": "1"}]})),
             Some("contacts.phone".to_string())
         );
+    }
+
+    #[test]
+    fn pii_guard_normalises_spelling_and_matches_fragments() {
+        // Spellings that bypassed an exact-match list: camelCase, other separators, fragments.
+        for k in [
+            "firstName", "FIRST-NAME", "emailAddress", "contact_email", "e-mail", "birthdate",
+            "date_of_birth", "passportNo", "mobile", "telephone", "signatory_name", "IBAN",
+            "iban_number", "ssn",
+        ] {
+            assert_eq!(find_pii_key(&json!({ k: "x" })), Some(k.to_string()), "{k} must be rejected");
+        }
+        // Company-level keys and the contract's own inputs must pass.
+        for k in [
+            "vendor_id", "screening_ref", "notes", "country_code", "vat_number", "lei",
+            "legal_name", "business_name", "company_address", "include_email",
+        ] {
+            assert_eq!(find_pii_key(&json!({ k: "x" })), None, "{k} must be accepted");
+        }
     }
 
     #[test]

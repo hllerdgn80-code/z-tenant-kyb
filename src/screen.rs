@@ -12,7 +12,7 @@ use alloc::format;
 use alloc::string::{String, ToString};
 use alloc::vec::Vec;
 
-use crate::common::{clean_vat, is_lei_shape, is_vies_country, names_match, parse_input, url_encode};
+use crate::common::{clean_vat, is_lei_shape, is_vies_country, names_match, parse_input};
 
 pub const VIES_URL: &str = "https://ec.europa.eu/taxation_customs/vies/rest-api/check-vat-number";
 pub const GLEIF_BASE: &str = "https://api.gleif.org/api/v1/lei-records";
@@ -211,6 +211,8 @@ pub fn screen_vendor(input: &[u8]) -> Result<Vec<u8>, String> {
 }
 
 #[cfg(target_arch = "wasm32")]
+use crate::common::url_encode;
+#[cfg(target_arch = "wasm32")]
 use crate::host::{interfaces::{http as http_iface, logging}, tenant::tenant_context};
 
 #[cfg(target_arch = "wasm32")]
@@ -352,9 +354,8 @@ mod tests {
             screened_at: 0,
         };
         let json = serde_json::to_string(&resp).unwrap();
-        for k in crate::common::PII_KEYS {
-            assert!(!json.contains(&format!("\"{k}\"")), "output leaks key {k}");
-        }
+        let parsed: serde_json::Value = serde_json::from_str(&json).unwrap();
+        assert_eq!(crate::common::find_pii_key(&parsed), None, "output leaks a person-level key: {json}");
     }
 
     #[test]

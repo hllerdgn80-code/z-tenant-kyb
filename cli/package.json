@@ -1,0 +1,23 @@
+{
+  "name": "z-tenant-kyb-cli",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Operator CLI for the z-tenant-kyb T3N contract: doctor / deploy / authorize / screen / onboard / logs / audit",
+  "engines": {
+    "node": ">=20.12"
+  },
+  "scripts": {
+    "kyb": "tsx src/index.ts",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@terminal3/t3n-sdk": "5.10.0",
+    "commander": "^15.0.0"
+  },
+  "devDependencies": {
+    "@types/node": "^24.0.0",
+    "tsx": "^4.23.13",
+    "typescript": "^5.9.3"
+  }
+}
