@@ -1,0 +1,5 @@
+/target
+/cli/node_modules
+/cli/dist
+.env
+*.log

@@ -1,0 +1,47 @@
+/// z-tenant-kyb WIT world — vendor KYB (Know Your Business) onboarding agent.
+///
+/// Imports (= the contract's entire capability set):
+///   - tenant-context:         tenant DID (for the z:<tid>:secrets map name), cluster timestamp
+///   - logging:                info / error lines (never contain PII)
+///   - kv-store:               reads `erp_onboarding_url` / `erp_api_key` from z:<tid>:secrets
+///   - http:                   screen-vendor — EU VIES + GLEIF lookups (company data only, no PII,
+///                             no API keys: both registers are free and unauthenticated)
+///   - http-with-placeholders: submit-onboarding — the ERP request body carries
+///                             `{{profile.<field>}}` markers for the signatory's identity; the host
+///                             resolves them inside the enclave, the contract never sees the values.
+package z:tenant-kyb@0.1.0;
+
+world tenant-kyb {
+    import host:tenant/tenant-context@1.0.0;
+    import host:interfaces/logging@2.1.0;
+    import host:interfaces/kv-store@2.1.0;
+    import host:interfaces/http@2.1.0;                    // screen-vendor (no PII)
+    import host:interfaces/http-with-placeholders@2.1.0;  // submit-onboarding (PII via placeholders)
+
+    export contracts;
+}
+
+interface contracts {
+    /// Standard 3-field envelope used by all contracts callable from the node.
+    record generic-input {
+        input:        option<list<u8>>,
+        user-profile: option<list<u8>>,
+        context:      option<list<u8>>,
+    }
+
+    /// Screen a vendor against public registers. Company identifiers only —
+    /// any person-level field (name, e-mail, date of birth, passport, phone, IBAN)
+    /// in the input is rejected at parse time.
+    /// Input  (JSON): { country_code, vat_number, lei?, legal_name? }
+    /// Output (JSON): { vat: {...}, lei: {...}, risk_flags: [...], screened_at }
+    screen-vendor: func(req: generic-input) -> result<list<u8>, string>;
+
+    /// Register the screened vendor in the tenant's ERP/procurement system.
+    /// The signatory's identity is NOT an input: the contract templates
+    /// `{{profile.first_name}}` / `{{profile.last_name}}` (and optionally the
+    /// verified e-mail) into the ERP body and the host resolves them from the
+    /// calling user's profile at dispatch time.
+    /// Input  (JSON): { vendor_id, screening_ref, include_email?, notes? }
+    /// Output (JSON): { status, erp_reference, http_code }
+    submit-onboarding: func(req: generic-input) -> result<list<u8>, string>;
+}
