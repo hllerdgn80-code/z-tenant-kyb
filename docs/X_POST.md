@@ -1,7 +1,7 @@
 # X thread (bonus)
 
 Post as a 2-tweet thread. Attach the `wasm-tools component wit` screenshot to tweet 1
-and the `kyb screen` (or `--dry-run`) screenshot to tweet 2. Replace [REPO] with
+and the `kyb screen` (or `--dry-run`) screenshot to tweet 2. Repo URL:
 https://github.com/hllerdgn80-code/z-tenant-kyb.
 
 ## Tweet 1
@@ -12,7 +12,7 @@ Rust TEE contract: screens suppliers via EU VIES + GLEIF, then registers them in
 
 ## Tweet 2
 
-Repo + handover runbook + doc bug report: [REPO]
+Repo + handover runbook + doc bug report: https://github.com/hllerdgn80-code/z-tenant-kyb
 
 19 native tests, 154 KB wasm32-wasip2 component, operator CLI with --dry-run. Handing it to Terminal 3 to host; happy to keep maintaining it.
 

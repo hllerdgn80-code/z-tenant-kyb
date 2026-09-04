@@ -71,14 +71,16 @@ Where the docs and the shipped artefacts disagreed we followed the artefacts (WI
 All captured on 2026-09-04 against **testnet** (node `cn-api.sg.testnet.t3n.terminal3.io`) with the tenant key claimed from the ADK community page. Text logs are in `docs/run-logs/`, rendered images in `docs/screenshots/`.
 
 1. `kyb doctor` — toolchain, WASM component check, VIES/GLEIF reachability, node `/status`, trust-manifest field check (warns: `rtmr1_allowlist` missing), tenant/agent/user sessions authenticated, tenant admitted — `15 ok, 2 warn, 0 failed`.
-2. `cargo test --target x86_64-apple-darwin --lib` — all native tests pass; `cargo build --target wasm32-wasip2 --release` — 153 KB component; `wasm-tools component wit` — the five `host:*` imports and the `z:tenant-kyb/contracts@0.1.0` export.
+2. `cargo test --target x86_64-apple-darwin --lib` — all native tests pass; `cargo build --target wasm32-wasip2 --release` — 154 KB (157,768 byte) component; `wasm-tools component wit` — the five `host:*` imports and the `z:tenant-kyb/contracts@0.1.0` export.
 3. `kyb deploy` — `registered z:07974b90…:kyb @ 0.1.0 → contract_id 879`, private `secrets` map created with `{ only: [879] }` ACL, `erp_onboarding_url` seeded.
 4. `kyb authorize` — `agent-auth-update` grant for `screen-vendor`, `submit-onboarding`, allowedHosts `ec.europa.eu, api.gleif.org, httpbin.org`. (First attempt with a separate, unfunded user identity: `InsufficientCredit … available=0` — see bugs.)
 5. `kyb screen --country IE --vat 6388047V --name "Google Ireland Limited"` — executed inside the enclave: VIES `valid=true`, GLEIF LEI `YYPPRNO5HB304LHFVG31`, `risk_flags: []`.
 6. `kyb screen --country DE --vat 000000000 --name "Nonexistent GmbH"` — `risk_flags: ["VAT_INVALID", "LEI_NOT_FOUND"]`.
 7. `kyb onboard --vendor-id V-GOOGLE-IE --screening-ref scr-2026-09-04-001` — `{{profile.first_name}}`/`{{profile.last_name}}` resolved host-side, ERP POST → `status: submitted, http_code: 200, erp_reference: Root=1-…` (the ERP echo body is never returned to the caller).
 8. `kyb logs` — contract log lines from inside the TEE (no PII), `kyb audit` — audit read as the agent.
-9. GitHub repo page (public) with the `docs/` folder.
+9. The repository itself is public and needs no screenshot to verify — open
+   https://github.com/hllerdgn80-code/z-tenant-kyb and the `docs/` folder is the
+   source of every image above (`docs/screenshots/`, rendered from `docs/run-logs/`).
 
 ## Bugs and doc issues faced (short)
 
@@ -116,8 +118,8 @@ with fixture tests for every parser, one secret to change to point at a real ERP
 
 ## Time to submit
 
-Started 2026-09-04 ~19:40 (Europe/Istanbul) by reading the refreshed docs (quickstart → walkthrough → tips → reference); contract, CLI, live testnet run, docs and bug report were finished the same evening (~4 hours), submitted 2026-09-04/05. Work was done with an AI coding assistant driving the ADK docs (llms.txt + .md pages) end to end.
+Started 2026-09-04 ~19:40 (Europe/Istanbul) by reading the refreshed docs (quickstart → walkthrough → tips → reference); contract, CLI, live testnet run, docs and bug report were finished the same evening (~4 hours), submitted 2026-09-04 (same day the refreshed docs were read). Work was done with an AI coding assistant driving the ADK docs (llms.txt + .md pages) end to end.
 
 ## Social
 
-X thread tagging @terminal3io and @SuperteamEarn: [LINK] (text in `docs/X_POST.md`).
+X thread tagging @terminal3io and @SuperteamEarn — draft text in `docs/X_POST.md`; the link is added to this document once posted.
