@@ -16,6 +16,44 @@ contradiction that costs real debugging time; **Low** = gap or inconsistency.
 
 ---
 
+## 0. SDK >= 5.3.0 cannot open a session on testnet — trust manifest lacks `rtmr1_allowlist` (Blocker)
+
+**Symptom.** `fetchTrustedManifest("testnet")` / `resolveTrustAnchor("testnet")` throw
+`Trust manifest at https://cn-api.sg.testnet.t3n.terminal3.io/api/trust-manifest is malformed.`
+The served document (`GET /api/trust-manifest`, `version: 1787800421`, `signed_at: 2026-08-27T03:13:41Z`) has
+`cluster, version, peer_ids, rtmr3_allowlist, signed_at, signature` and **no `rtmr1_allowlist`**, which
+`SignedTrustManifest` in the SDK's `dist/index.d.ts` (>= 5.3.0) declares as required. `T3nClient` also refuses a
+hand-built anchor without it, so every documented flow — quickstart, `TenantClient`, register, agent auth, invoke —
+fails at step one on the current SDK. Other entrants report the same in the listing comments.
+
+**Bisection (2026-09-04).** Same call, same node: **5.2.0 → OK** (returns `expected_peer_ids, rtmr3_allowlist, source`);
+**5.3.0, 5.4.0, 5.5.0, 5.8.0, 5.10.0 → "malformed"**. The breaking change shipped in 5.3.0 (2026-08-28), one day after
+the manifest was signed. Script: `cli/DISCREPANCIES.md` #1 (probe: `npm i @terminal3/t3n-sdk@<v>` + a 4-line
+`fetchTrustedManifest` call).
+
+**What we did.** The CLI pins `@terminal3/t3n-sdk` **5.2.0** and keeps verified attestation (`T3N_TRUST=manifest`);
+`unsafe_trust_server` stays a debug switch that is refused on production. With 5.2.0 the full flow works live
+(register → contract_id 879, maps, grant, `screen-vendor`, `submit-onboarding`).
+
+**Suggested fix.** Publish `rtmr1_allowlist` in the testnet manifest (operator side), and/or make the SDK accept
+manifests that predate the field (as `manifestToTrustAnchor` already does). Until then, put a one-line notice in
+the Quickstart: "testnet currently requires SDK 5.2.0".
+
+## 0b. A separate agent/user identity starts with 0 credits, and the claim page issues one key per Google account (High)
+
+**Symptom.** Agent Auth says the agent DID "needs its own test credits … get it a key from the same claim page".
+The claim page is Google-SSO only (the docs say "work email") and rate-limited to one signup per e-mail, so a
+second identity cannot be funded without a second Google account. The first grant attempt from a locally generated
+user key failed with `InsufficientCredit (account=3a8281aa…, required=10000000000, available=0)`
+(request_id `d0198fc4-b543-4cbf-a25c-41c3ff0cb600`). The tenant namespace has no credit transfer
+(`TenantTokenNamespace` only exposes `getUsage`).
+
+**What we did.** Used the documented self-grant path (tenant identity = data owner = agent) for the demo, and
+documented the production setup (three identities) in `docs/HANDOVER.md`.
+
+**Suggested fix.** Let a funded tenant transfer test credits to its agent DIDs (or issue N keys per signup), and
+state on the Agent Auth page that the claim page is one-key-per-Google-account.
+
 ## 1. Nested placeholder marker: reference contract vs host WIT (High)
 
 **Where**
