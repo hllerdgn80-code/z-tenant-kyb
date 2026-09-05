@@ -5,7 +5,7 @@ Vendor KYB (Know Your Business) onboarding agent for T3N tenants. A Rust TEE con
 against two public company registers and register it in their ERP -- without the agent,
 the contract, or the tenant's own servers ever holding the signatory's personal data.
 
-> **Status (2026-09-05):** live on T3N **testnet** — `z:07974b90cb13c1e659db9a9bbb74ea825e2f63c0:kyb` @ 0.1.0, contract_id **879**; `screen-vendor` and `submit-onboarding` verified end to end (logs in `docs/run-logs/`, images in `docs/screenshots/`). CLI pins `@terminal3/t3n-sdk` **5.2.0** because 5.3.0+ cannot open a testnet session (`docs/BUGS.md` #0).
+> **Status (2026-09-05):** live on T3N **testnet** — `z:07974b90cb13c1e659db9a9bbb74ea825e2f63c0:kyb` @ 0.1.0, contract_id **879**; `screen-vendor` and `submit-onboarding` verified end to end (logs in `docs/run-logs/`, images in `docs/screenshots/`). CLI pins `@terminal3/t3n-sdk` **5.2.0** because 5.3.0+ cannot open a testnet session (`docs/BUGS.md` #0). CI: `.github/workflows/ci.yml` runs the native tests, builds and validates the component, and typechecks the CLI on every push.
 
 
 Built for the Superteam Earn bounty "Try out new docs to build a trusted agent with T3N".
