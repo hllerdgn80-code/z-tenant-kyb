@@ -15,7 +15,7 @@ use alloc::format;
 use alloc::string::{String, ToString};
 use alloc::vec::Vec;
 
-use crate::common::parse_input;
+use crate::common::{find_pii_in_text, parse_input};
 
 pub const SECRET_ERP_URL: &str = "erp_onboarding_url";
 pub const SECRET_ERP_API_KEY: &str = "erp_api_key";
@@ -25,12 +25,25 @@ pub const MARKER_LAST_NAME: &str = "{{profile.last_name}}";
 /// are rejected with `placeholder-denied` — so it is opt-in (`include_email: true`).
 pub const MARKER_EMAIL: &str = "{{profile.verified_contacts.email.value}}";
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Clone, PartialEq, Eq)]
 pub struct OnboardReq {
     pub vendor_id: String,
     pub screening_ref: String,
     pub include_email: bool,
+    /// Free text for the ERP record. Rejected at parse time when it looks like personal
+    /// data (see [`find_pii_in_text`]) and never logged — only its length shows in `Debug`.
     pub notes: Option<String>,
+}
+
+impl core::fmt::Debug for OnboardReq {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.debug_struct("OnboardReq")
+            .field("vendor_id", &self.vendor_id)
+            .field("screening_ref", &self.screening_ref)
+            .field("include_email", &self.include_email)
+            .field("notes", &self.notes.as_ref().map(|n| format!("<{} chars, not logged>", n.chars().count())))
+            .finish()
+    }
 }
 
 #[derive(Debug, serde::Serialize)]
@@ -56,11 +69,14 @@ pub fn parse_request(input: &[u8]) -> Result<OnboardReq, String> {
         .ok_or("submit-onboarding: `screening_ref` is required — run screen-vendor first")?
         .to_string();
     let include_email = v.get("include_email").and_then(|x| x.as_bool()).unwrap_or(false);
-    let notes = v
-        .get("notes")
-        .and_then(|x| x.as_str())
-        .map(|s| s.trim().chars().take(1000).collect::<String>())
-        .filter(|s| !s.is_empty());
+    let notes = v.get("notes").and_then(|x| x.as_str()).map(str::trim).filter(|s| !s.is_empty());
+    if let Some(kind) = notes.and_then(find_pii_in_text) {
+        return Err(format!(
+            "submit-onboarding: `notes` looks like it carries {} — notes must not contain personal data; the signatory reaches the ERP only via {{{{profile.*}}}} placeholders",
+            kind.describe()
+        ));
+    }
+    let notes = notes.map(|s| s.chars().take(1000).collect::<String>());
     Ok(OnboardReq { vendor_id, screening_ref, include_email, notes })
 }
 
@@ -153,6 +169,7 @@ fn submit_onboarding_wasm(req: OnboardReq) -> Result<OnboardResp, String> {
         headers.push(("Authorization".to_string(), format!("Bearer {k}")));
     }
     let body = build_erp_body(&req, tenant_context::cluster_timestamp_secs());
+    // Opaque ids only — `notes` is free text and is never logged.
     let _ = logging::info(&format!(
         "onboarding vendor_id={} screening_ref={} include_email={}",
         req.vendor_id, req.screening_ref, req.include_email
@@ -232,6 +249,33 @@ mod tests {
             "Root=1-abc"
         );
         assert_eq!(extract_reference(202, b"not json"), "http-202");
+    }
+
+    #[test]
+    fn notes_carrying_personal_data_are_rejected_with_the_kind_named() {
+        for (notes, kind) in [
+            ("signatory reachable at ada.lovelace@example.com", "an e-mail address"),
+            ("call +49 30 1234 5678 before Friday", "a phone-number-like run of 8+ digits"),
+            ("settle to DE44 5001 0517 5407 3249 31", "an IBAN-shaped account number"),
+        ] {
+            let input = serde_json::json!({"vendor_id": "V-1", "screening_ref": "scr-9", "notes": notes}).to_string();
+            let err = parse_request(input.as_bytes()).unwrap_err();
+            assert!(err.contains("`notes`") && err.contains(kind), "{notes}: {err}");
+            assert!(!err.contains(notes), "the error must not echo the notes");
+        }
+        // Ordinary vendor notes and an absent/blank field still pass.
+        let ok = parse_request(br#"{"vendor_id":"V-1","screening_ref":"scr-9","notes":"preferred supplier, net 30, LEI 529900D6BF99LW9R2E68"}"#).unwrap();
+        assert!(ok.notes.as_deref().unwrap().starts_with("preferred"));
+        assert_eq!(parse_request(br#"{"vendor_id":"V-1","screening_ref":"scr-9","notes":"  "}"#).unwrap().notes, None);
+    }
+
+    #[test]
+    fn debug_output_shows_ids_but_never_the_notes() {
+        let r = parse_request(br#"{"vendor_id":"V-1","screening_ref":"scr-9","notes":"confidential remark"}"#).unwrap();
+        let dbg = format!("{r:?}");
+        assert!(dbg.contains("V-1") && dbg.contains("scr-9"), "{dbg}");
+        assert!(!dbg.contains("confidential"), "{dbg}");
+        assert!(dbg.contains("<19 chars, not logged>"), "{dbg}");
     }
 
     #[test]

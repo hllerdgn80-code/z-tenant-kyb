@@ -42,6 +42,8 @@ interface contracts {
     /// verified e-mail) into the ERP body and the host resolves them from the
     /// calling user's profile at dispatch time.
     /// Input  (JSON): { vendor_id, screening_ref, include_email?, notes? }
+    ///   `notes` is free text: rejected when it looks like personal data (e-mail
+    ///   address, 8+ digit phone-like run, IBAN) and never written to the logs.
     /// Output (JSON): { status, erp_reference, http_code }
     submit-onboarding: func(req: generic-input) -> result<list<u8>, string>;
 }

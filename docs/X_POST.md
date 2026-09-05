@@ -14,6 +14,6 @@ Rust TEE contract: screens suppliers via EU VIES + GLEIF, then registers them in
 
 Repo + handover runbook + doc bug report: https://github.com/hllerdgn80-code/z-tenant-kyb
 
-19 native tests, 154 KB wasm32-wasip2 component, operator CLI with --dry-run. Handing it to Terminal 3 to host; happy to keep maintaining it.
+24 native tests, 160 KB wasm32-wasip2 component, operator CLI with --dry-run. Handing it to Terminal 3 to host; happy to keep maintaining it.
 
 Docs feedback inside (nested placeholders, env naming, wasi imports).

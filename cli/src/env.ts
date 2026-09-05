@@ -33,6 +33,17 @@ export const SECRET_ERP_API_KEY = "erp_api_key";
 export const REGISTER_HOSTS = ["ec.europa.eu", "api.gleif.org"] as const;
 /** Echo endpoint substituted when ERP_ONBOARDING_URL is unset — for `--dry-run` and `doctor` only; live runs refuse it (liveErpUrl). */
 export const DEMO_ERP_URL = "https://httpbin.org/post";
+/**
+ * Public request-echo services. Whatever the contract POSTs there — the ERP body with the signatory's
+ * {{profile.*}} placeholders already resolved — is shown to whoever reads the echo, so a live `deploy` /
+ * `authorize` refuses them unless --allow-demo-erp / KYB_ALLOW_DEMO_ERP=1 says a throwaway identity is in use.
+ */
+export const DEMO_ERP_HOSTS = ["httpbin.org", "postman-echo.com", "webhook.site"] as const;
+
+export function isDemoErpHost(host: string): boolean {
+  const h = host.toLowerCase();
+  return DEMO_ERP_HOSTS.some((d) => h === d || h.endsWith(`.${d}`));
+}
 
 export interface Config {
   readonly t3nApiKey?: string;
@@ -41,6 +52,10 @@ export interface Config {
   readonly erpOnboardingUrl: string;
   /** True when ERP_ONBOARDING_URL was unset and DEMO_ERP_URL was substituted. */
   readonly erpUrlIsDemoDefault: boolean;
+  /** True when the ERP host is one of DEMO_ERP_HOSTS (a public echo service). */
+  readonly erpHostIsDemoEcho: boolean;
+  /** --allow-demo-erp or KYB_ALLOW_DEMO_ERP=1: a live run may seed/grant a DEMO_ERP_HOSTS target. */
+  readonly allowDemoErp: boolean;
   readonly erpApiKey?: string;
   readonly env: T3nEnv;
   readonly trust: TrustMode;
@@ -65,7 +80,12 @@ function loadDotEnv(): void {
   if (existsSync(file)) process.loadEnvFile(file); // already-exported variables take precedence
 }
 
-export function loadConfig(): Config {
+export interface ConfigOverrides {
+  /** A command's --allow-demo-erp flag; KYB_ALLOW_DEMO_ERP=1 is the env-var equivalent. */
+  readonly allowDemoErp?: boolean | undefined;
+}
+
+export function loadConfig(overrides: ConfigOverrides = {}): Config {
   loadDotEnv();
   const env = optional("T3N_ENV") ?? "testnet";
   if (!(T3N_ENVS as readonly string[]).includes(env)) {
@@ -81,6 +101,7 @@ export function loadConfig(): Config {
   const erpFromEnv = optional("ERP_ONBOARDING_URL");
   const erpOnboardingUrl = erpFromEnv ?? DEMO_ERP_URL;
   if (!URL.canParse(erpOnboardingUrl)) throw new Error(`ERP_ONBOARDING_URL is not a valid URL: "${erpOnboardingUrl}"`);
+  const allowDemoErp = overrides.allowDemoErp === true || optional("KYB_ALLOW_DEMO_ERP") === "1";
 
   const t3nApiKey = optional("T3N_API_KEY");
   const agentKey = optional("AGENT_KEY");
@@ -93,6 +114,8 @@ export function loadConfig(): Config {
   return {
     erpOnboardingUrl,
     erpUrlIsDemoDefault: erpFromEnv === undefined,
+    erpHostIsDemoEcho: isDemoErpHost(hostOf(erpOnboardingUrl)),
+    allowDemoErp,
     env: env as T3nEnv,
     trust: trust as TrustMode,
     contractTail: optional("CONTRACT_TAIL") ?? "kyb",
@@ -136,15 +159,24 @@ export function hostOf(url: string): string {
 
 /**
  * The ERP URL for a live (non-dry-run) command. The demo default is refused so a forgotten
- * variable can never seed httpbin.org — together with a real ERP_API_KEY — into a tenant.
+ * variable can never seed httpbin.org — together with a real ERP_API_KEY — into a tenant, and an
+ * explicit DEMO_ERP_HOSTS target needs --allow-demo-erp / KYB_ALLOW_DEMO_ERP=1 (demoErpRefusal).
  */
 export function liveErpUrl(cfg: Config): string {
   if (cfg.erpUrlIsDemoDefault) {
     throw new Error(
-      `ERP_ONBOARDING_URL is not set — refusing to use the demo endpoint ${DEMO_ERP_URL} on a live run. Set it in cli/.env (explicitly to ${DEMO_ERP_URL} for a smoke test without ERP_API_KEY).`,
+      `ERP_ONBOARDING_URL is not set — refusing to use the demo endpoint ${DEMO_ERP_URL} on a live run. Set it in cli/.env (explicitly to ${DEMO_ERP_URL} plus KYB_ALLOW_DEMO_ERP=1 for a smoke test without ERP_API_KEY).`,
     );
   }
+  const refusal = demoErpRefusal(cfg);
+  if (refusal) throw new Error(refusal);
   return cfg.erpOnboardingUrl;
+}
+
+/** Why a live run must not use the configured ERP URL — undefined when it may. Pure. */
+export function demoErpRefusal(cfg: Config): string | undefined {
+  if (!cfg.erpHostIsDemoEcho || cfg.allowDemoErp) return undefined;
+  return `ERP_ONBOARDING_URL points at ${hostOf(cfg.erpOnboardingUrl)}, a public request-echo service — refusing on a live run: submit-onboarding POSTs the ERP body there with the signatory's {{profile.*}} markers already resolved, so the echo target (and anyone who can read its log) receives the data owner's real name/e-mail. Pass --allow-demo-erp (or set KYB_ALLOW_DEMO_ERP=1) only with a throwaway demo identity, or point ERP_ONBOARDING_URL at your ERP.`;
 }
 
 export function relPath(p: string): string {

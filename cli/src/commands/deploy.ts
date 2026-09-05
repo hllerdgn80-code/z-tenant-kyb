@@ -20,6 +20,8 @@ interface DeployOptions {
   dryRun?: boolean;
   claim?: boolean;
   contractId?: number;
+  allowDemoErp?: boolean;
+  yes?: boolean;
 }
 
 function readWasm(cfg: Config): Uint8Array {
@@ -88,15 +90,36 @@ async function ensureSecretsMap(tenant: TenantClient, contractId: number | undef
   }
 }
 
-/** Live-run guard: never seed a real bearer token next to the public echo service. Pure; throws before any network call. */
+/** Live-run guard: never seed a real bearer token next to a public echo service. Pure; throws before any network call. */
 function erpSecretsForLiveRun(cfg: Config): string {
-  const url = liveErpUrl(cfg);
-  if (cfg.erpApiKey && hostOf(url) === "httpbin.org") {
+  const url = liveErpUrl(cfg); // refuses the demo default and, without --allow-demo-erp, every DEMO_ERP_HOSTS target
+  if (cfg.erpApiKey && cfg.erpHostIsDemoEcho) {
     throw new Error(
-      "ERP_API_KEY is set while ERP_ONBOARDING_URL points at httpbin.org — refusing: submit-onboarding would send that bearer token to a third-party echo service. Unset ERP_API_KEY for the demo endpoint, or point ERP_ONBOARDING_URL at your ERP.",
+      `ERP_API_KEY is set while ERP_ONBOARDING_URL points at ${hostOf(url)}, a public echo service — refusing: submit-onboarding would send that bearer token to it. Unset ERP_API_KEY for the demo endpoint, or point ERP_ONBOARDING_URL at your ERP.`,
     );
   }
   return url;
+}
+
+/** Production only: show what is seeded now and never overwrite it silently. Runs after ensureSecretsMap, so a fresh map reads back empty. */
+async function confirmProductionOverwrite(tenant: TenantClient, cfg: Config, erpUrl: string, yes: boolean | undefined): Promise<void> {
+  if (cfg.env !== "production") return;
+  let existing: string | null;
+  try {
+    existing = await tenant.maps.entryGet(SECRETS_TAIL, SECRET_ERP_URL);
+  } catch (e) {
+    if (yes) {
+      console.log(`production: could not read the current ${SECRET_ERP_URL} (${messageChain(e)}) — seeding anyway because --yes was given`);
+      return;
+    }
+    throw new Error(`production: could not read the current ${SECRET_ERP_URL} (${messageChain(e)}) — refusing to overwrite blind; pass --yes to seed anyway`);
+  }
+  if (existing === null) {
+    console.log(`production: ${SECRET_ERP_URL} is not seeded yet — nothing to overwrite`);
+    return;
+  }
+  console.log(`production: current ${SECRET_ERP_URL} = ${existing}${existing === erpUrl ? " (same value)" : `\n            new     ${SECRET_ERP_URL} = ${erpUrl}`}`);
+  if (!yes) throw new Error(`production: refusing to overwrite ${SECRET_ERP_URL} without --yes (current value printed above)`);
 }
 
 /** The owner writes entries through the control plane (map-entry-set) regardless of the contract-only ACL. */
@@ -111,12 +134,21 @@ async function seedSecrets(tenant: TenantClient, cfg: Config, erpUrl: string): P
   }
 }
 
+function erpUrlNote(cfg: Config): string {
+  if (cfg.erpUrlIsDemoDefault) return " — demo default, ERP_ONBOARDING_URL is not set: a live run refuses it";
+  if (!cfg.erpHostIsDemoEcho) return "";
+  return cfg.allowDemoErp
+    ? " — public echo host, allowed by --allow-demo-erp / KYB_ALLOW_DEMO_ERP=1: it receives the resolved signatory data"
+    : " — public echo host: a live run refuses it without --allow-demo-erp";
+}
+
 export async function deploy(cfg: Config, opts: DeployOptions): Promise<void> {
   const plan = [
     `tenant session with T3N_API_KEY (${describeSecret(cfg.t3nApiKey)}) on ${cfg.env} → tenant DID read back from the session${opts.claim ? ", then tenant.claim() self-admit" : ""}`,
     `contracts.register({ tail: "${cfg.contractTail}", version: "${cfg.contractVersion}", wasm: ${relPath(cfg.wasmPath)} (${wasmSizeKb(cfg)}) }) → z:<tid>:${cfg.contractTail} + contract_id`,
     `maps.getStatus("${SECRETS_TAIL}") → create private map with readers/writers { only: [contract_id] } if absent, else maps.update() to sync the ACL`,
-    `maps.entrySet("${SECRETS_TAIL}", "${SECRET_ERP_URL}", ${cfg.erpOnboardingUrl} [host ${hostOf(cfg.erpOnboardingUrl)}]${cfg.erpUrlIsDemoDefault ? " — demo default, ERP_ONBOARDING_URL is not set: a live run refuses it" : ""})${cfg.erpApiKey ? ` + entrySet("${SECRETS_TAIL}", "${SECRET_ERP_API_KEY}", <${describeSecret(cfg.erpApiKey)}>)` : " (ERP_API_KEY not set — skipped)"}`,
+    ...(cfg.env === "production" ? [`production: maps.entryGet("${SECRETS_TAIL}", "${SECRET_ERP_URL}") → print the current value and refuse to overwrite it unless --yes`] : []),
+    `maps.entrySet("${SECRETS_TAIL}", "${SECRET_ERP_URL}", ${cfg.erpOnboardingUrl} [host ${hostOf(cfg.erpOnboardingUrl)}]${erpUrlNote(cfg)})${cfg.erpApiKey ? ` + entrySet("${SECRETS_TAIL}", "${SECRET_ERP_API_KEY}", <${describeSecret(cfg.erpApiKey)}>)` : " (ERP_API_KEY not set — skipped)"}`,
     "write cli/.kyb-state.json { tenantDid, scriptName, contractId, version }",
   ];
   console.log(`deploy plan (${opts.dryRun ? "dry run — nothing sent" : "live"}):`);
@@ -133,6 +165,7 @@ export async function deploy(cfg: Config, opts: DeployOptions): Promise<void> {
   }
   const contractId = await registerContract(tenant, cfg, wasm, opts.contractId, did);
   await ensureSecretsMap(tenant, contractId);
+  await confirmProductionOverwrite(tenant, cfg, erpUrl, opts.yes);
   await seedSecrets(tenant, cfg, erpUrl);
   const scriptName = tenant.canonicalName(cfg.contractTail);
   writeState({ tenantDid: did, scriptName, version: cfg.contractVersion, ...(contractId !== undefined ? { contractId } : {}) });
@@ -144,4 +177,6 @@ export const deployCommand = new Command("deploy")
   .option("--dry-run", "print the plan without touching the network")
   .option("--claim", "call tenant.claim() (testnet self-admit) before registering")
   .option("--contract-id <n>", "known contract id for the map ACL when register is a same-version no-op", (v) => Number.parseInt(v, 10))
-  .action((opts: DeployOptions) => runCommand((cfg) => deploy(cfg, opts)));
+  .option("--allow-demo-erp", "let a live run seed a public echo host (httpbin.org, postman-echo.com, webhook.site) — it receives the resolved signatory data; throwaway identities only")
+  .option("--yes", "production: overwrite an already-seeded erp_onboarding_url (deploy prints the current value first)")
+  .action((opts: DeployOptions) => runCommand((cfg) => deploy(cfg, opts), { allowDemoErp: opts.allowDemoErp }));

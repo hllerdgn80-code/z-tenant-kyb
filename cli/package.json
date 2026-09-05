@@ -9,7 +9,8 @@
   },
   "scripts": {
     "kyb": "tsx src/index.ts",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run"
   },
   "dependencies": {
     "@terminal3/t3n-sdk": "5.2.0",
@@ -18,6 +19,7 @@
   "devDependencies": {
     "@types/node": "^24.0.0",
     "tsx": "^4.23.13",
-    "typescript": "^5.9.3"
+    "typescript": "^5.9.3",
+    "vitest": "^4.1.11"
   }
 }

@@ -4,12 +4,19 @@ Scope: the ADK pages we used (local copies of quickstart, set-up-dev-env, adk-to
 what-is-z-namespace, create-kv-maps, capabilities-from-wit-import, agent-auth-adk,
 outbound-http-auth-by-user, common-errors), the reference contract
 `Terminal-3/z-tenant-flight` (its README, `wit/`, `src/booking.rs`), and the published
-SDK `@terminal3/t3n-sdk@5.10.0` (`dist/index.d.ts`, `README.md`, `package.json`, and the
-runtime bundle evaluated locally). Line numbers refer to those files as of 2026-09-04.
+SDK `@terminal3/t3n-sdk`. Two SDK versions appear below: **5.10.0** (latest at the time)
+was used for the API review -- every `index.d.ts` line number refers to that version
+(`dist/index.d.ts`, `README.md`, `package.json`, runtime bundle evaluated locally) -- and
+**5.2.0** is what the CLI pins and what the live testnet run used (item 0 says why).
+Line numbers refer to those files as of 2026-09-04.
 
 Each item states what we could verify ourselves. Items marked *reported by others* come
-from the bounty comments and were **not** reproduced by us. Nothing here was run against
-a live node unless stated.
+from the bounty comments and were **not** reproduced by us. Items 0, 0b, 2, 6, 9, 10, 12
+and 13 have live-node observations (2026-09-04, `docs/run-logs/`); everything else is
+static review. Each item ends with a **Status** line: *open* (needs a docs / SDK /
+operator change), *worked around* (the CLI or contract avoids it), or *fixed in our repo*
+(nothing left on our side). The short CLI-facing list `cli/DISCREPANCIES.md` is
+cross-referenced per item so the two never disagree.
 
 Severity: **High** = blocks or silently breaks the documented path; **Medium** =
 contradiction that costs real debugging time; **Low** = gap or inconsistency.
@@ -28,8 +35,8 @@ fails at step one on the current SDK. Other entrants report the same in the list
 
 **Bisection (2026-09-04).** Same call, same node: **5.2.0 → OK** (returns `expected_peer_ids, rtmr3_allowlist, source`);
 **5.3.0, 5.4.0, 5.5.0, 5.8.0, 5.10.0 → "malformed"**. The breaking change shipped in 5.3.0 (2026-08-28), one day after
-the manifest was signed. Script: `cli/DISCREPANCIES.md` #1 (probe: `npm i @terminal3/t3n-sdk@<v>` + a 4-line
-`fetchTrustedManifest` call).
+the manifest was signed. Script: `bash sdk-probe/run.sh` (installs each version alone in a temp dir and calls
+`fetchTrustedManifest`; the 4-line manual probe is in `cli/DISCREPANCIES.md` #1).
 
 **What we did.** The CLI pins `@terminal3/t3n-sdk` **5.2.0** and keeps verified attestation (`T3N_TRUST=manifest`);
 `unsafe_trust_server` stays a debug switch that is refused on production. With 5.2.0 the full flow works live
@@ -39,20 +46,28 @@ the manifest was signed. Script: `cli/DISCREPANCIES.md` #1 (probe: `npm i @termi
 manifests that predate the field (as `manifestToTrustAnchor` already does). Until then, put a one-line notice in
 the Quickstart: "testnet currently requires SDK 5.2.0".
 
+**Status.** Worked around (SDK pinned to 5.2.0, verified attestation kept); open upstream. Upgrade condition:
+the node publishes `rtmr1_allowlist`. = `cli/DISCREPANCIES.md` #1.
+
 ## 0b. A separate agent/user identity starts with 0 credits, and the claim page issues one key per Google account (High)
 
 **Symptom.** Agent Auth says the agent DID "needs its own test credits … get it a key from the same claim page".
-The claim page is Google-SSO only (the docs say "work email") and rate-limited to one signup per e-mail, so a
-second identity cannot be funded without a second Google account. The first grant attempt from a locally generated
-user key failed with `InsufficientCredit (account=3a8281aa…, required=10000000000, available=0)`
-(request_id `d0198fc4-b543-4cbf-a25c-41c3ff0cb600`). The tenant namespace has no credit transfer
-(`TenantTokenNamespace` only exposes `getUsage`).
+What the evidence supports: a locally generated user key has zero credits -- the first grant attempt from it
+failed with `InsufficientCredit (account=3a8281aa…, required=10000000000, available=0)`
+(request_id `d0198fc4-b543-4cbf-a25c-41c3ff0cb600`) -- and the tenant namespace has no credit transfer
+(`TenantTokenNamespace` only exposes `getUsage`). The "one key per e-mail / Google-only sign-in" part is what we
+observed with our single account (Google SSO, one key issued; the docs say "work email") **and** what other
+entrants report in the listing comments; we did not verify it beyond that one account (no second Google account
+was tried), so treat it as observed once plus reported, not independently confirmed.
 
 **What we did.** Used the documented self-grant path (tenant identity = data owner = agent) for the demo, and
 documented the production setup (three identities) in `docs/HANDOVER.md`.
 
 **Suggested fix.** Let a funded tenant transfer test credits to its agent DIDs (or issue N keys per signup), and
 state on the Agent Auth page that the claim page is one-key-per-Google-account.
+
+**Status.** Worked around for the demo (self-grant; the delegated path is untested -- `docs/HANDOVER.md` section 6);
+open upstream. Related: `cli/DISCREPANCIES.md` #8 (an unclaimed tenant key is `InsufficientCredit` too).
 
 ## 1. Nested placeholder marker: reference contract vs host WIT (High)
 
@@ -82,6 +97,9 @@ the WIT. If nested paths are supported, change the WIT comment to "dotted paths 
 they are not, change `booking.rs:80` to a flat alias (e.g. `{{profile.email}}`) and
 document that alias.
 
+**Status.** Worked around (`include_email` opt-in, flat markers by default); open upstream. The nested marker was
+never sent live, so which side is right is still unknown. = `cli/DISCREPANCIES.md` #11.
+
 ## 2. Agent Auth page sends camelCase grant fields through a raw `execute` (High, not executed by us)
 
 **Where**
@@ -110,6 +128,10 @@ about. We did not run this against a node; the SDK's own comments are the eviden
 non-deprecated `updateMemberDelegation`) and show the resulting snake_case wire once so
 raw callers know the field names. Say explicitly whether `versionReq` is required.
 
+**Status.** Worked around: the CLI uses `updateAgentAuth()`, and that helper's snake_case wire was accepted live on
+2026-09-04 (self-grant, `docs/run-logs/authorize.txt`). The documented raw camelCase call was not tried, so whether
+it fails is still inferred from the SDK comments. Open upstream (docs). = `cli/DISCREPANCIES.md` #2.
+
 ## 3. Environment naming: `testnet` vs `sandbox` (Medium)
 
 **Where**
@@ -137,6 +159,8 @@ alias in the `Environment` type comment, and update SDK `README.md:108-118` to m
 quickstart. Also state in one place that `fetchTrustedManifest(env)` throws when an
 environment has no pinned operator key (`index.d.ts:5878-5881`).
 
+**Status.** Open (docs / SDK README); no impact on the CLI (`T3N_ENV` defaults to `testnet`). = `cli/DISCREPANCIES.md` #5.
+
 ## 4. Common errors: "`T3nClient` doesn't take a `baseUrl`" is false (Medium)
 
 **Where**
@@ -156,6 +180,8 @@ types and the README. `TenantClientConfig` (`index.d.ts:6043-6060`) also has
 **Suggested fix.** Reword the row: "`T3nClient` resolves its node from `setEnvironment()`
 unless you pass `baseUrl`; `TenantClient` does not inherit that, so pass `baseUrl:
 getNodeUrl()` (or `environment`) explicitly."
+
+**Status.** Open (docs). The CLI passes `baseUrl`, `tenantDid` and `environment` and worked live. = `cli/DISCREPANCIES.md` #9.
 
 ## 5. Egress model wording and missing typed placeholder errors (Medium)
 
@@ -186,6 +212,9 @@ to Common errors for the `http-with-placeholders` variants with the fix for each
 (missing profile field -> user must complete profile; no user context -> call through a
 user session / grant; placeholder denied -> only `profile.*`, flat snake_case).
 
+**Status.** Open (docs). The CLI always sends `pii_did` (= `cli/DISCREPANCIES.md` #3); only the happy path was
+observed live -- the no-grant / no-user-context failures were not (`docs/HANDOVER.md` section 6).
+
 ## 6. `wasi:*` imports of a `wasm32-wasip2` component are undocumented (Medium)
 
 **Where**
@@ -210,6 +239,10 @@ with the Rust standard library on `wasm32-wasip2` also import `wasi:cli`, `wasi:
 they grant no network or file access. If you want a smaller import set build with
 `#![no_std]` / `panic = "abort"`."
 
+**Status.** Open (docs). Observed live: the node registered and executed the component with those `wasi:*` imports
+present (contract_id 879), so in practice they are linked or stubbed; what they can reach is still undocumented.
+No `cli/DISCREPANCIES.md` counterpart.
+
 ## 7. Claim page: three URLs and two sign-in stories (Medium; SSO detail reported by others)
 
 **Where**
@@ -226,6 +259,9 @@ A "work email" reader on a non-Google domain may be blocked.
 
 **Suggested fix.** Use one canonical URL everywhere and state the supported identity
 providers on that page and in `README.md:25-27`.
+
+**Status.** Open (docs). Observed on our side: one claim via Google SSO on `go.terminal3.io/adk-community` issued one
+0x-prefixed 64-hex private key; see 0b for what that does and does not prove. = `cli/DISCREPANCIES.md` #4 (key shapes).
 
 ## 8. Reference contract README is stale in three places (Medium)
 
@@ -250,6 +286,9 @@ providers on that page and in `README.md:25-27`.
 the placeholder-based `book-offer` input, align the version, and write the test command
 as `cargo test --target $(rustc -vV | sed -n 's/host: //p') --lib`.
 
+**Status.** Open (upstream repo). Fixed in our repo: README and CI use `cargo test --target <host-triple> --lib`.
+No `cli/DISCREPANCIES.md` counterpart.
+
 ## 9. `map-entry-set`: control-plane call vs typed helper (Low)
 
 **Where**
@@ -269,6 +308,8 @@ the canonical name for you (`canonicalNameForTarget`), which is where the
 **Suggested fix.** Show `await tenant.maps.entrySet("secrets", "duffel_api_key", key)`
 as the primary form and keep `executeControl` as the escape hatch.
 
+**Status.** Open (docs). The CLI uses `maps.entrySet`, which seeded `erp_onboarding_url` live. = `cli/DISCREPANCIES.md` #6.
+
 ## 10. `getAuditEvents` exists in the SDK (Low; the "unverified" note is on a page we do not have locally)
 
 **Where** -- SDK `index.d.ts:3077` `getAuditEvents(opts?: GetAuditEventsOptions):
@@ -279,16 +320,23 @@ to the session key per the doc comment at `:3070-3076`.
 `pii_did` lets a delegated agent read the events it performed for a user while the grant
 is live.
 
+**Status.** Verified live: `kyb audit` returned `{"batches":[],"next_cursor":null}` for the agent's own trail on a
+self-call (`docs/run-logs/audit.txt`); whether events appear for delegated calls is untested. Open (docs still say
+unverified). = `cli/DISCREPANCIES.md` #10.
+
 ## 11. SDK version history (Low; partially verified)
 
 **Where** -- `node_modules/@terminal3/t3n-sdk/package.json` `"version": "5.10.0"`;
-`sdk-probe/package-lock.json:471-474` resolved from
-`https://registry.npmjs.org/@terminal3/t3n-sdk/-/t3n-sdk-5.10.0.tgz`. The changelog page
+`sdk-probe/run.sh` resolves each probed version from
+`https://registry.npmjs.org/@terminal3/t3n-sdk/-/t3n-sdk-<v>.tgz` (no lock file is committed). The changelog page
 that says there is no verified version history is not in our local copy.
 
 **Suggested fix.** Generate the version list from `npm view @terminal3/t3n-sdk time` and
 link the published `README.md` for each; at minimum state the current version and the
-minimum version the testnet accepts (see item 12).
+minimum version the testnet accepts (see item 0).
+
+**Status.** Open (docs). Versions we used: 5.10.0 (review), 5.2.0 (live); 5.3.0 to 5.10.0 fail on testnet (item 0).
+No `cli/DISCREPANCIES.md` counterpart.
 
 ## 12. `contracts.register` input matches the docs; result shape and `source_hash` are undocumented (Low)
 
@@ -300,7 +348,10 @@ aliases. `docs/common-errors.md:15` correctly names the `version` field.
 **Not a bug.** Worth documenting: the numeric `contract_id` that `maps.create` ACLs
 (`create-kv-maps.md:13-14`) expect, and that `source_hash` "never gates execution".
 
-## 13. Contract logs are off by default; nothing in the docs says so (Low)
+**Status.** Verified live: `contracts.register` returned `contract_id 879` and `maps.create` accepted it in the ACL.
+Open (docs). = `cli/DISCREPANCIES.md` #7.
+
+## 13. SDK types say contract logs need a quota; the docs do not say so, and testnet returned logs anyway (Low)
 
 **Where** -- SDK `index.d.ts:6463-6471` `contracts.logs`: "Requires the tenant's
 `log_max_entries` quota to be non-zero (the master enable; logs are off by default);
@@ -309,6 +360,10 @@ log_max_entries docs/` -> no hits.
 
 **Suggested fix.** One line in Common errors: "`contracts.logs` returns `entries: []`
 until the operator raises `log_max_entries` for your tenant."
+
+**Status.** Open (docs). Observed live: our freshly claimed testnet tenant got 10 log entries back without any quota
+change (`docs/run-logs/logs.txt`), so either the testnet default is non-zero or the d.ts comment describes
+production. = `cli/DISCREPANCIES.md` #10 (second bullet).
 
 ---
 

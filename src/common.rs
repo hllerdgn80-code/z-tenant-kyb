@@ -146,6 +146,116 @@ pub fn is_lei_shape(lei: &str) -> bool {
     lei.len() == 20 && lei.chars().all(|c| c.is_ascii_alphanumeric())
 }
 
+/// What a free-text value looks like it carries — see [`find_pii_in_text`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TextPii {
+    Email,
+    Phone,
+    Iban,
+}
+
+impl TextPii {
+    /// Wording for error messages.
+    pub fn describe(self) -> &'static str {
+        match self {
+            TextPii::Email => "an e-mail address",
+            TextPii::Phone => "a phone-number-like run of 8+ digits",
+            TextPii::Iban => "an IBAN-shaped account number",
+        }
+    }
+}
+
+/// Does a free-text value (`notes`) look like it carries personal data? Three cheap
+/// shape checks, no regex: `local@domain.tld`; 8 or more digits in a row where spaces,
+/// `-`, `.`, `/` and parentheses may sit between them (phone numbers — but also card
+/// numbers, VAT numbers and, by design, ISO dates); an IBAN in compact
+/// (`DE44500105175407324931`) or printed (`DE44 5001 0517 …`) form.
+/// Opaque ids (`vendor_id`, `screening_ref`) are never scanned — reference numbers belong there.
+pub fn find_pii_in_text(s: &str) -> Option<TextPii> {
+    // Most specific shape first: a printed IBAN is also an 8+ digit run.
+    if looks_like_email(s) {
+        Some(TextPii::Email)
+    } else if looks_like_iban(s) {
+        Some(TextPii::Iban)
+    } else if looks_like_phone(s) {
+        Some(TextPii::Phone)
+    } else {
+        None
+    }
+}
+
+fn is_email_local_char(c: char) -> bool {
+    c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '-' | '+')
+}
+
+fn is_email_domain_char(c: char) -> bool {
+    c.is_ascii_alphanumeric() || matches!(c, '.' | '-')
+}
+
+fn looks_like_email(s: &str) -> bool {
+    let chars: Vec<char> = s.chars().collect();
+    chars.iter().enumerate().filter(|(_, c)| **c == '@').any(|(i, _)| {
+        let local_ok = i > 0 && is_email_local_char(chars[i - 1]);
+        let domain: String = chars[i + 1..].iter().take_while(|c| is_email_domain_char(**c)).collect();
+        // `host.tld` with a letters-only TLD of 2+ characters (a trailing full stop is prose)
+        let domain_ok = domain.trim_end_matches('.').rsplit_once('.').is_some_and(|(host, tld)| {
+            !host.is_empty() && tld.len() >= 2 && tld.chars().all(|c| c.is_ascii_alphabetic())
+        });
+        local_ok && domain_ok
+    })
+}
+
+fn looks_like_phone(s: &str) -> bool {
+    let mut digits = 0usize;
+    for c in s.chars() {
+        if c.is_ascii_digit() {
+            digits += 1;
+            if digits >= 8 {
+                return true;
+            }
+        } else if !(digits > 0 && matches!(c, ' ' | '-' | '.' | '/' | '(' | ')')) {
+            digits = 0; // anything but a separator inside a digit run ends it
+        }
+    }
+    false
+}
+
+/// ISO 13616 shape: 2 letters, 2 check digits, 11–30 alphanumerics (15–34 in total).
+fn is_iban_shape(t: &str) -> bool {
+    let b = t.as_bytes();
+    (15..=34).contains(&b.len())
+        && b[..2].iter().all(u8::is_ascii_alphabetic)
+        && b[2..4].iter().all(u8::is_ascii_digit)
+        && b[4..].iter().all(u8::is_ascii_alphanumeric)
+}
+
+fn looks_like_iban(s: &str) -> bool {
+    // Tokens are whitespace-separated words with surrounding punctuation removed. An IBAN is
+    // one token (compact form) or a token followed by 4-character groups (print form); prose
+    // such as "PO no 42 approved" is never joined, so a 2-letter word + number cannot trip it.
+    let tokens: Vec<String> = s
+        .split_whitespace()
+        .map(|t| t.trim_matches(|c: char| !c.is_ascii_alphanumeric()).to_ascii_uppercase())
+        .collect();
+    for start in 0..tokens.len() {
+        let mut joined = String::new();
+        for (n, t) in tokens[start..].iter().enumerate() {
+            let prev_is_group = n == 0 || tokens[start + n - 1].len() == 4;
+            if t.is_empty() || !t.bytes().all(|b| b.is_ascii_alphanumeric()) || !prev_is_group {
+                break;
+            }
+            joined.push_str(t);
+            if joined.len() > 34 {
+                break;
+            }
+            if is_iban_shape(&joined) {
+                return true;
+            }
+        }
+    }
+    false
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -225,5 +335,24 @@ mod tests {
         assert!(is_lei_shape("529900T8BM49AURSDO55"));
         assert!(!is_lei_shape("short"));
         assert_eq!(url_encode("SAP SE & Co"), "SAP%20SE%20%26%20Co");
+    }
+
+    #[test]
+    fn text_scanner_flags_email_phone_iban_but_not_company_ids() {
+        assert_eq!(find_pii_in_text("contact: ada@example.com."), Some(TextPii::Email));
+        assert_eq!(find_pii_in_text("call +49 (0)30 1234-5678"), Some(TextPii::Phone));
+        assert_eq!(find_pii_in_text("pay to DE44 5001 0517 5407 3249 31, thanks"), Some(TextPii::Iban));
+        assert_eq!(find_pii_in_text("iban de44500105175407324931"), Some(TextPii::Iban));
+        // Company identifiers and ordinary prose stay clean.
+        for s in [
+            "LEI 529900D6BF99LW9R2E68, entity ACTIVE",
+            "PO no 42 approved by procurement",
+            "net 30, ref ABC-1234",
+            "@handle without a domain",
+            "a@b",
+            "",
+        ] {
+            assert_eq!(find_pii_in_text(s), None, "{s:?} must pass");
+        }
     }
 }

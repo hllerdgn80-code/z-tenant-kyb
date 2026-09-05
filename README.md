@@ -29,8 +29,11 @@ signs. Today that data sits in spreadsheets and e-mail. This contract moves it i
 - **Person-level key names are rejected at parse time.** Any key that normalises to a
   well-known person field (`firstName`, `date_of_birth`, `passportNo`, `iban`, ...) or
   contains `email`, `phone`, `passport`, `birth` or `iban`, anywhere in the input, is an
-  error. Only key names are checked -- values are not inspected -- so keep `notes`,
-  `vendor_id` and `screening_ref` free of personal data.
+  error. Key names are checked everywhere; the one free-text value, `notes`, is also
+  content-scanned (`common::find_pii_in_text`: an e-mail address, an IBAN-shaped account
+  number, or a run of 8+ digits as in a phone number) and refused without being echoed.
+  `vendor_id` and `screening_ref` are opaque and never scanned, so reference numbers
+  belong there, not in `notes`.
 - **The ERP secret lives in the tenant's sealed `z:<tid>:secrets` map**, seeded by the
   operator, readable only by this contract.
 
@@ -81,13 +84,15 @@ block comes back `checked: false`.
 | Flag | Meaning |
 |---|---|
 | `VAT_CHECK_UNAVAILABLE` | VIES returned a transport error, a non-200, or a `userError` other than VALID/INVALID (e.g. `MS_UNAVAILABLE`). Retry later; the VAT was not judged. |
-| `VAT_INVALID` | VIES answered and the VAT number is not valid. |
+| `VIES_RATE_LIMITED` | VIES answered HTTP 429: the check was throttled, not broken. Retry later; the VAT was not judged. |
+| `VAT_INVALID` | VIES answered and the VAT number is not valid. This reflects the register's state, not only bad input: on 2026-09-04 VIES returned `valid=false` (name `---`) for SAP SE's `DE143593636` while the DE backend showed as available (`docs/run-logs/logs.txt`, `cli/DISCREPANCIES.md` #12). Treat it as "re-check with the vendor / by LEI", not as proof of a bad vendor. |
 | `LEI_CHECK_UNAVAILABLE` | GLEIF transport/HTTP/parse error. |
+| `GLEIF_RATE_LIMITED` | GLEIF answered HTTP 429: throttled, retry later. |
 | `LEI_NOT_FOUND` | GLEIF answered 404 or an empty list. |
 | `LEI_NOT_ISSUED` | LEI exists but `registration.status` is not `ISSUED` (LAPSED, RETIRED, ...). |
 | `ENTITY_NOT_ACTIVE` | LEI record's `entity.status` is not `ACTIVE`. |
 | `COUNTRY_MISMATCH` | GLEIF legal-address country differs from the VIES country (EL->GR and XI->GB are mapped). |
-| `NAME_MISMATCH` | Claimed name (input or VIES name) does not match the GLEIF name, or the input name does not match the VIES name, after suffix/case normalisation. |
+| `NAME_MISMATCH` | Raised at most once when (a) the claimed name (`legal_name`, else the VIES name) does not match the GLEIF `legalName`, or (b) `legal_name` does not match the VIES name. "Match" = equal, or one contains the other, after normalisation (lower-case, ASCII letters/digits only, corporate suffixes such as GmbH/Ltd/SE/Inc stripped -- `common::names_match`). It needs two names: DE VIES answers carry no name, so for German vendors it is only evaluated against GLEIF and only when you pass `legal_name` or `lei`. |
 
 An empty `risk_flags` array means both registers answered and everything agreed.
 
@@ -114,6 +119,31 @@ The `email` line is present only when `include_email: true` (see Maintenance not
 why). Markers are replaced by the host before the request leaves the enclave. Headers:
 `Accept: application/json` and, if `erp_api_key` is set, `Authorization: Bearer <key>`.
 
+### ERP body mapping
+
+The body is generic on purpose; there is no vendor-specific adapter. Map it on the ERP
+side (inbound API, iPaaS step or webhook) -- this example targets a typical
+supplier-master / business-partner endpoint:
+
+| Body field | Typical ERP field | Note |
+|---|---|---|
+| `vendor_id` | supplier number / external id (`SupplierID`, `BusinessPartner`) | your key; the contract only echoes it |
+| `screening_ref`, `source`, `contract_version` | compliance reference / attachment note | keep next to the stored `screen-vendor` result |
+| `signatory.first_name`, `signatory.last_name`, `signatory.role` | primary contact person (`FirstName`, `LastName`, `Function`) | resolved by the host; the ERP is the first system that sees the values |
+| `signatory.email` (opt-in) | contact e-mail | only with `include_email: true` |
+| `notes`, `submitted_at` | free-text remark, created-on timestamp | `submitted_at` is cluster seconds since the epoch |
+
+If the ERP insists on its own key names, change them in `onboard::build_erp_body` (pure,
+unit-tested) and keep the `{{profile.*}}` markers as plain string values.
+
+**Demo target warning.** `https://httpbin.org/post` is a public echo service. Because the
+host substitutes the markers before the request leaves the enclave, httpbin's servers
+*receive the resolved signatory name* (and e-mail, if opted in). Use it only with
+throw-away demo profiles, never with a real person's profile. The CLI refuses an
+public echo host (httpbin.org, postman-echo.com, webhook.site) on a live run unless
+you pass `--allow-demo-erp` or set `KYB_ALLOW_DEMO_ERP=1`, and refuses
+`ERP_API_KEY` together with it in any case.
+
 ## Privacy model
 
 1. **PII guard on input (key names only).** `common::parse_input` walks the whole JSON
@@ -122,9 +152,12 @@ why). Markers are replaced by the host before the request leaves the enclave. He
    (first/last/given/family/middle/full/signatory name, mobile, date of birth, SSN,
    national id, home address) or contains one of `PII_FRAGMENTS` (`email`, `phone`,
    `passport`, `birth`, `iban`); `include_email` is the one allow-listed flag. The error
-   names the offending path (`signatory.email`). Values are never inspected: a free-text
-   `notes` field can still carry personal data if the caller puts it there, so the guard
-   is a seatbelt against misrouted fields, not a content filter.
+   names the offending path (`signatory.email`). Values are not inspected, with one
+   exception: the free-text `notes` field is scanned for an e-mail address, an IBAN
+   shape, or 8+ digits in a row (`common::find_pii_in_text`) and refused without being
+   echoed (ISO dates and VAT numbers trip the digit rule too -- put reference numbers in
+   the opaque ids). The guard is a seatbelt against misrouted fields, not a content
+   filter.
 2. **Placeholders, not values.** The signatory's identity reaches the ERP only through
    `{{profile.*}}` markers resolved by `host:interfaces/http-with-placeholders`. The
    contract's own tests assert the body contains only unresolved markers.
@@ -174,12 +207,12 @@ Node 26 / npm 11 for the CLI. `.cargo/config.toml` sets the default build target
 rustup target add wasm32-wasip2
 cargo install wasm-tools            # optional, for inspection
 
-# 19 native unit tests (parsers, PII guard, risk scoring, body building)
+# 24 native unit tests (parsers, PII guard, risk scoring, body building)
 cargo test --target x86_64-apple-darwin --lib          # macOS Intel/Rosetta
 # cargo test --target aarch64-apple-darwin --lib       # macOS Apple Silicon
 # cargo test --target x86_64-unknown-linux-gnu --lib   # Linux
 
-# WASM component (~154 KB)
+# WASM component (~160 KB)
 cargo build --target wasm32-wasip2 --release
 ls -la target/wasm32-wasip2/release/z_tenant_kyb.wasm
 
@@ -219,24 +252,27 @@ Environment variables (never printed by the CLI):
 | `T3N_API_KEY` | tenant | Your tenant key from the claim page (shown once). Used by `deploy`, `logs`. |
 | `AGENT_KEY` | agent | A separate key with its own DID and test credits. Used by `screen`, `onboard`, `audit`. |
 | `USER_KEY` | data owner | The signatory's own key. Used by `authorize` (signs the grant). |
-| `ERP_ONBOARDING_URL` | tenant | Full URL the onboarding POST goes to. Seeded into the secrets map by `deploy`. Required for a live `deploy` / `authorize`; only `--dry-run` and `doctor` fall back to the demo echo `https://httpbin.org/post`. |
-| `ERP_API_KEY` | tenant | Optional bearer token for that URL. Seeded by `deploy`, which refuses it together with an httpbin.org URL (the token would go to a public echo service). |
+| `ERP_ONBOARDING_URL` | tenant | Full URL the onboarding POST goes to. Seeded into the secrets map by `deploy`. Required for a live `deploy` / `authorize`; only `--dry-run` and `doctor` fall back to the demo echo `https://httpbin.org/post`. A live run refuses an httpbin.org URL unless `--allow-demo-erp` is given -- the echo service receives the resolved signatory data (see "ERP body mapping"). |
+| `ERP_API_KEY` | tenant | Optional bearer token for that URL. Seeded by `deploy`, which refuses it together with an httpbin.org URL (the token would go to a public echo service), flag or no flag. |
 
 `deploy`, `authorize`, `screen` and `onboard` have `--dry-run`, which builds and prints the
 exact request they would send (with secrets masked) without contacting the node; `logs` and
-`audit` are read-only and have none. Testnet compatibility with the
-latest SDK was uncertain during the bounty window; all network failures are surfaced with
-the node's `detail` string and a hint from the ADK "Common errors" page.
+`audit` are read-only and have none. The CLI pins `@terminal3/t3n-sdk` 5.2.0 and runs
+with verified attestation (`T3N_TRUST=manifest`); that is the configuration the live
+testnet results were produced with (contract_id 879, `docs/run-logs/`). SDK 5.3.0 and
+later reject testnet's current trust manifest (no `rtmr1_allowlist`); move to the latest
+SDK once the node publishes that field (`docs/BUGS.md` #0). All network failures are
+surfaced with the node's `detail` string and a hint from the ADK "Common errors" page.
 
 Example session:
 
 ```bash
 export T3N_API_KEY=... AGENT_KEY=... USER_KEY=...
-export ERP_ONBOARDING_URL=https://httpbin.org/post     # demo: any JSON-accepting endpoint (leave ERP_API_KEY unset for it)
+export ERP_ONBOARDING_URL=https://httpbin.org/post     # demo echo: receives the resolved signatory name -- demo profiles only, ERP_API_KEY unset
 cd cli && npm install
 npx tsx src/index.ts doctor
-npx tsx src/index.ts deploy
-npx tsx src/index.ts authorize
+npx tsx src/index.ts deploy --allow-demo-erp            # the flag is only needed for an httpbin.org URL
+npx tsx src/index.ts authorize --allow-demo-erp
 npx tsx src/index.ts screen --country IE --vat 6388047V --name "Google Ireland Limited"
 npx tsx src/index.ts onboard --vendor-id V-1 --screening-ref scr-9
 npx tsx src/index.ts logs
@@ -253,8 +289,9 @@ npx tsx src/index.ts logs
   `tenant.maps.entrySet("secrets", ...)`). Then add the ERP host to the user grant's
   `allowedHosts` (`authorize`). If the ERP wants a different body shape, edit
   `onboard::build_erp_body` -- it is a pure function with a unit test.
-- **GLEIF name search takes the first match** (`page[size]=1`). Pass `lei` when you have
-  it for an exact lookup.
+- **GLEIF name search picks the best of the first five hits** (`page[size]=5`): the
+  record whose normalised `legalName` equals the searched name, else the first record.
+  Pass `lei` when you have it for an exact lookup.
 - **Email marker is opt-in.** The ADK's flagship example uses the nested marker
   `{{profile.verified_contacts.email.value}}`, but the host WIT in `wit/deps` says nested
   markers are rejected with `placeholder-denied`. Until that is settled, pass
@@ -268,8 +305,10 @@ npx tsx src/index.ts logs
 - **Adding a register.** Add a pure `parse_*` function with a fixture test in
   `screen.rs`, call it from `screen_vendor_wasm`, and extend `risk_flags`. Keep the
   request free of person fields so it stays on plain `http`.
-- **Logs are off by default on the node** (`log_max_entries` quota); ask the operator to
-  enable them before relying on `logs`.
+- **Log quota.** The SDK types say `contracts.logs` is empty until the tenant's
+  `log_max_entries` quota is raised. On testnet (2026-09-04) a freshly claimed tenant got
+  its entries back without any change (`docs/run-logs/logs.txt`), so try `kyb logs` first
+  and ask the operator only if it stays empty.
 
 ## Repository layout
 

@@ -3,7 +3,9 @@
 //!   1. EU VIES  — POST https://ec.europa.eu/taxation_customs/vies/rest-api/check-vat-number
 //!                 → { valid, name, address, requestDate, userError }
 //!   2. GLEIF    — GET  https://api.gleif.org/api/v1/lei-records/<LEI>
-//!                 or   https://api.gleif.org/api/v1/lei-records?filter[entity.legalName]=<name>
+//!                 or   https://api.gleif.org/api/v1/lei-records?filter[entity.legalName]=<name>&page[size]=5
+//!                      (the record whose normalised legal name equals the looked-up name wins,
+//!                      otherwise the first result)
 //!
 //! Only company identifiers cross the WIT boundary. Parsing and risk scoring are
 //! pure functions (tested natively); only the two `http` calls are wasm32-only.
@@ -12,10 +14,12 @@ use alloc::format;
 use alloc::string::{String, ToString};
 use alloc::vec::Vec;
 
-use crate::common::{clean_vat, is_lei_shape, is_vies_country, names_match, parse_input};
+use crate::common::{clean_vat, is_lei_shape, is_vies_country, names_match, normalise_name, parse_input};
 
 pub const VIES_URL: &str = "https://ec.europa.eu/taxation_customs/vies/rest-api/check-vat-number";
 pub const GLEIF_BASE: &str = "https://api.gleif.org/api/v1/lei-records";
+/// Records fetched by a GLEIF name search; the best normalised-name match among them is used.
+pub const GLEIF_PAGE_SIZE: u8 = 5;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ScreenReq {
@@ -123,8 +127,14 @@ pub fn parse_vies(code: u16, body: &[u8]) -> VatResult {
     r
 }
 
-/// Parse a GLEIF JSON:API response (single record or a filtered list). Pure.
+/// Parse a GLEIF JSON:API response (single record or a filtered list); a list yields its first record. Pure.
 pub fn parse_gleif(code: u16, body: &[u8]) -> LeiResult {
+    parse_gleif_matching(code, body, None)
+}
+
+/// Like [`parse_gleif`], but a list yields the record whose normalised legal name equals
+/// `wanted` (normalised) when there is one, else the first record. Pure.
+pub fn parse_gleif_matching(code: u16, body: &[u8], wanted: Option<&str>) -> LeiResult {
     let mut r = LeiResult { checked: true, ..Default::default() };
     if code == 404 {
         return r; // found=false, no error: a clean "not registered"
@@ -140,8 +150,19 @@ pub fn parse_gleif(code: u16, body: &[u8]) -> LeiResult {
             return r;
         }
     };
-    let rec = if j["data"].is_array() { j["data"].get(0) } else { j.get("data") };
-    let Some(rec) = rec else { return r };
+    let rec = match &j["data"] {
+        serde_json::Value::Array(items) => {
+            let wanted = wanted.map(normalise_name).filter(|w| !w.is_empty());
+            let exact = wanted.and_then(|w| {
+                items.iter().find(|it| {
+                    it["attributes"]["entity"]["legalName"]["name"].as_str().is_some_and(|n| normalise_name(n) == w)
+                })
+            });
+            exact.or_else(|| items.first())
+        }
+        _ => j.get("data"),
+    };
+    let Some(rec) = rec.filter(|it| it.is_object()) else { return r };
     let a = &rec["attributes"];
     r.found = true;
     r.lei = a["lei"].as_str().map(str::to_string);
@@ -152,16 +173,21 @@ pub fn parse_gleif(code: u16, body: &[u8]) -> LeiResult {
     r
 }
 
+/// A register answered HTTP 429: the check was throttled, not broken — retry later.
+fn is_rate_limited(error: &str) -> bool {
+    error.contains("HTTP 429")
+}
+
 /// Derive risk flags from the two register results. Pure.
 pub fn risk_flags(req: &ScreenReq, vat: &VatResult, lei: &LeiResult) -> Vec<String> {
     let mut flags = Vec::new();
-    if vat.error.is_some() {
-        flags.push("VAT_CHECK_UNAVAILABLE".to_string());
+    if let Some(e) = &vat.error {
+        flags.push(if is_rate_limited(e) { "VIES_RATE_LIMITED" } else { "VAT_CHECK_UNAVAILABLE" }.to_string());
     } else if !vat.valid {
         flags.push("VAT_INVALID".to_string());
     }
-    if lei.error.is_some() {
-        flags.push("LEI_CHECK_UNAVAILABLE".to_string());
+    if let Some(e) = &lei.error {
+        flags.push(if is_rate_limited(e) { "GLEIF_RATE_LIMITED" } else { "LEI_CHECK_UNAVAILABLE" }.to_string());
     } else if !lei.found {
         flags.push("LEI_NOT_FOUND".to_string());
     } else {
@@ -240,7 +266,7 @@ fn screen_vendor_wasm(req: ScreenReq) -> Result<ScreenResp, String> {
     let gleif_url = match (&req.lei, &lookup_name) {
         (Some(lei), _) => Some(format!("{GLEIF_BASE}/{lei}")),
         (None, Some(name)) => Some(format!(
-            "{GLEIF_BASE}?filter%5Bentity.legalName%5D={}&page%5Bsize%5D=1",
+            "{GLEIF_BASE}?filter%5Bentity.legalName%5D={}&page%5Bsize%5D={GLEIF_PAGE_SIZE}",
             url_encode(name)
         )),
         (None, None) => None,
@@ -253,7 +279,7 @@ fn screen_vendor_wasm(req: ScreenReq) -> Result<ScreenResp, String> {
             headers: Some(alloc::vec![("Accept".to_string(), "application/vnd.api+json".to_string())]),
             payload: None,
         }) {
-            Ok(r) => parse_gleif(r.code, &r.payload),
+            Ok(r) => parse_gleif_matching(r.code, &r.payload, lookup_name.as_deref()),
             Err(e) => LeiResult { checked: true, error: Some(format!("GLEIF transport: {e}")), ..Default::default() },
         },
     };
@@ -283,6 +309,8 @@ mod tests {
     const VIES_DOWN: &[u8] = br#"{"countryCode":"DE","vatNumber":"143593636","valid":false,"userError":"MS_UNAVAILABLE"}"#;
     const GLEIF_LIST: &[u8] = br#"{"data":[{"type":"lei-records","id":"529900D6BF99LW9R2E68","attributes":{"lei":"529900D6BF99LW9R2E68","entity":{"legalName":{"name":"SAP SE"},"status":"ACTIVE","legalAddress":{"country":"DE"}},"registration":{"status":"ISSUED"}}}]}"#;
     const GLEIF_LAPSED: &[u8] = br#"{"data":{"type":"lei-records","id":"X","attributes":{"lei":"X","entity":{"legalName":{"name":"Other GmbH"},"status":"INACTIVE","legalAddress":{"country":"AT"}},"registration":{"status":"LAPSED"}}}}"#;
+    /// A name search for "SAP SE" as GLEIF ranks it: the subsidiary first, the parent second.
+    const GLEIF_TWO: &[u8] = br#"{"data":[{"type":"lei-records","id":"A","attributes":{"lei":"AAAAAAAAAAAAAAAAAAAA","entity":{"legalName":{"name":"SAP America, Inc."},"status":"ACTIVE","legalAddress":{"country":"US"}},"registration":{"status":"ISSUED"}}},{"type":"lei-records","id":"B","attributes":{"lei":"529900D6BF99LW9R2E68","entity":{"legalName":{"name":"SAP SE"},"status":"ACTIVE","legalAddress":{"country":"DE"}},"registration":{"status":"ISSUED"}}}]}"#;
 
     fn req() -> ScreenReq {
         parse_request(br#"{"country_code":"de","vat_number":"DE 143593636","legal_name":"SAP SE"}"#).unwrap()
@@ -324,6 +352,28 @@ mod tests {
         assert_eq!(s.registration_status.as_deref(), Some("LAPSED"));
         let nf = parse_gleif(404, b"{}");
         assert!(nf.checked && !nf.found && nf.error.is_none());
+    }
+
+    #[test]
+    fn gleif_name_search_prefers_the_exact_normalised_match() {
+        // Exact (normalised) match wins over the top-ranked record …
+        let sap = parse_gleif_matching(200, GLEIF_TWO, Some("sap se"));
+        assert_eq!(sap.lei.as_deref(), Some("529900D6BF99LW9R2E68"));
+        assert_eq!(sap.legal_name.as_deref(), Some("SAP SE"));
+        // … the first record is used when nothing matches exactly, or when no name is known.
+        assert_eq!(parse_gleif_matching(200, GLEIF_TWO, Some("Siemens")).lei.as_deref(), Some("AAAAAAAAAAAAAAAAAAAA"));
+        assert_eq!(parse_gleif(200, GLEIF_TWO).lei.as_deref(), Some("AAAAAAAAAAAAAAAAAAAA"));
+        assert!(!parse_gleif_matching(200, br#"{"data":[]}"#, Some("SAP SE")).found);
+        // With the right record picked, the clean vendor has no flags.
+        assert!(risk_flags(&req(), &parse_vies(200, VIES_OK), &sap).is_empty());
+    }
+
+    #[test]
+    fn risk_flags_name_rate_limits_instead_of_unavailable() {
+        let flags = risk_flags(&req(), &parse_vies(429, b""), &parse_gleif(429, b""));
+        assert_eq!(flags, alloc::vec!["VIES_RATE_LIMITED".to_string(), "GLEIF_RATE_LIMITED".to_string()]);
+        let generic = risk_flags(&req(), &parse_vies(503, b""), &parse_gleif(500, b""));
+        assert_eq!(generic, alloc::vec!["VAT_CHECK_UNAVAILABLE".to_string(), "LEI_CHECK_UNAVAILABLE".to_string()]);
     }
 
     #[test]

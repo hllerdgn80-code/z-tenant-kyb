@@ -9,7 +9,7 @@ end). Everything below is what an operator needs to run it without reading the s
 
 | Piece | Location | Notes |
 |---|---|---|
-| TEE contract | `src/`, `wit/`, `Cargo.toml` | Rust -> `wasm32-wasip2` component, 2 exported functions, 19 native tests |
+| TEE contract | `src/`, `wit/`, `Cargo.toml` | Rust -> `wasm32-wasip2` component, 2 exported functions, 24 native tests |
 | Operator CLI | `cli/` | TypeScript on `@terminal3/t3n-sdk`; `--dry-run` on every command that sends a request (`deploy`, `authorize`, `screen`, `onboard`) |
 | Docs | `README.md`, `docs/` | this file, bug report, submission text |
 
@@ -31,8 +31,9 @@ Full I/O tables are in the README.
   uses `process.loadEnvFile`; we used Node 26 / npm 11); `wasm-tools` optional.
 - **An ERP endpoint** that accepts a JSON POST. For a smoke test any JSON-echoing
   endpoint works (the contract extracts a reference and never returns the echoed body).
-- **Node-side**: `log_max_entries` quota > 0 if you want `contracts.logs` to return
-  anything (logs are off by default according to the SDK types).
+- **Node-side**: the SDK types say `contracts.logs` returns nothing until the tenant's
+  `log_max_entries` quota is > 0. On testnet our freshly claimed tenant got entries back
+  without any change (2026-09-04), so check `kyb logs` before asking for a quota.
 
 ## 3. Secrets to seed
 
@@ -72,9 +73,19 @@ input.agents[0]
 the outbound call fails inside the enclave (`egress-denied` / `host/http.egress_denied`).
 The same mechanism scopes `submit-onboarding`: the placeholders resolve from the
 **calling user's** profile, so the person who grants is the person whose name lands in
-the ERP. Note: the SDK also exposes typed helpers (`agentAuthUpdate`, `updateAgentAuth`,
-and the newer `updateMemberDelegation`) that emit the contract's snake_case wire; see
-`docs/BUGS.md` item 2 for why we mention this.
+the ERP.
+
+How the grant is sent: `kyb authorize` uses the SDK's typed helper `updateAgentAuth()`
+(read-merge-write; `toAgentAuthUpdateWire` turns the camelCase document above into the
+contract's snake_case wire `agent_did` / `script_name` / `version_req` / `functions` /
+`allowed_hosts`). That path worked live on 2026-09-04 (`docs/run-logs/authorize.txt`);
+the raw camelCase `execute` snippet from the Agent Auth page was not tried -- see
+`docs/BUGS.md` item 2. `kyb authorize --dry-run` prints both forms. (The newer
+`updateMemberDelegation` helper exists too; we did not use it.)
+
+The `generic-input` envelope's `user-profile` field plays no part in this: it is always
+`None` on this path (see the comment in `wit/world.wit`) and the contract reads only
+`input`. The signatory's data exists only host-side, after placeholder substitution.
 
 To **revoke**, re-issue the grant without the agent (the document is the new state).
 
@@ -122,15 +133,48 @@ call; use it to review before touching a live tenant.
 `tenant.contracts.disable("kyb")` (SDK `TenantContractsNamespace.disable`), or revoke
 the agent grant. Re-enable with `enable`.
 
-## 6. Known limitations
+## 6. What was and was not exercised on testnet (2026-09-04)
+
+**Exercised**, with SDK 5.2.0 and verified attestation (`T3N_TRUST=manifest`), logs in
+`docs/run-logs/`: `doctor` (15 ok / 2 warn), `deploy` (register -> contract_id 879,
+private `secrets` map with `{ only: [879] }`, `erp_onboarding_url` seeded), `authorize`
+(grant accepted), `screen` for a valid vendor (`IE6388047V`, no flags) and an invalid one
+(`DE000000000`, `VAT_INVALID` + `LEI_NOT_FOUND`), `onboard` (placeholders resolved
+host-side, echo endpoint HTTP 200, `erp_reference` taken from the echo's trace-id header),
+`logs` (10 entries) and `audit`.
+
+**Not exercised -- read before hosting.** All three roles were the *same* identity:
+tenant DID = agent DID = data-owner DID = `did:t3n:07974b90cb13c1e659db9a9bbb74ea825e2f63c0`.
+The grant was a self-grant and `pii_did` was set to the caller's own DID, because
+separately generated identities start with zero credits (`docs/BUGS.md` #0b). Therefore:
+
+- The **delegated path** is untested: agent DID != data-owner DID, `pii_did` set to the
+  owner, placeholders resolved from *another* profile, egress authorised by the owner's
+  grant rather than the caller's own.
+- The **no-grant failure mode** was not observed. Expected from the WIT and the SDK
+  types: `screen-vendor` fails with `host/http.egress_denied`; `submit-onboarding` with
+  `egress-denied`, or with `placeholder-no-user-context` (`PlaceholderNoUserContext` in
+  `src/onboard.rs`) when no user context is bound.
+- `kyb audit` returned `{"batches":[],"next_cursor":null}` on this self-call; what the
+  trail looks like for a delegated call (`pii_did` of another user) is unknown.
+- Not tried: `include_email: true` (nested marker), an `erp_api_key` bearer (the demo
+  endpoint had none), a real ERP, revocation, and a contract-version bump.
+
+First thing to do under a Terminal 3 tenant: repeat section 5 with three funded
+identities and confirm `onboard` lands the *data owner's* name, not the agent's.
+
+## 7. Known limitations
 
 - **VIES flakiness.** Member-state backends go down often. The contract reports this as
   `risk_flags: ["VAT_CHECK_UNAVAILABLE"]` with `vat.error = "VIES MS_UNAVAILABLE"` (or
   an HTTP code) instead of failing, so callers should retry later rather than treat it
   as invalid.
-- **GLEIF name search takes the first match** (`page[size]=1`, exact `entity.legalName`
-  filter). Supply `lei` for a deterministic lookup; a wrong first match surfaces as
-  `NAME_MISMATCH` / `COUNTRY_MISMATCH`.
+- **GLEIF name search picks the best of five hits** (`page[size]=5`, exact
+  `entity.legalName` filter; `screen::parse_gleif_matching` prefers the record whose
+  normalised name equals the searched name, else the first). Supply `lei` for a
+  deterministic lookup; a wrong pick surfaces as `NAME_MISMATCH` / `COUNTRY_MISMATCH`.
+- **Register throttling is its own flag.** HTTP 429 from VIES/GLEIF yields
+  `VIES_RATE_LIMITED` / `GLEIF_RATE_LIMITED` instead of `*_CHECK_UNAVAILABLE`.
 - **Nested e-mail marker is opt-in.** `{{profile.verified_contacts.email.value}}` is used
   by the reference contract, but the host WIT shipped in `wit/deps` says nested markers
   are rejected with `placeholder-denied`. `submit-onboarding` sends it only when
@@ -139,17 +183,16 @@ the agent grant. Re-enable with `enable`.
   (Northern Ireland); non-EU vendors get a parse error, not a screening.
 - **One ERP per tenant.** The endpoint is a single secret; multi-ERP routing would need a
   key per ERP and a selector in the input.
-- **Testnet compatibility.** On 2026-09-04 testnet's trust manifest lacked the
-  `rtmr1_allowlist` field that SDK 5.10.0 requires, so under the default `T3N_TRUST=manifest`
-  every session command fails at `fetchTrustedManifest`. Under `T3N_TRUST=unsafe` we verified
-  with unclaimed keys that `handshake` + `authenticate`, `kyb audit`, and the execute dispatch
-  (contract-id validation, request_id `6d25b431-8e2e-41cf-a0f3-5c05f37c4c6b`) all work; `deploy`
-  and `logs` were blocked only by credits (`InsufficientCredit`, HTTP 403, request_id
-  `fe3d0e55-16ec-4636-b99f-ed8e4eea7ff3`), which a claimed key or `kyb deploy --claim` resolves.
-  The CLI surfaces the node's `detail` string verbatim and offers `--dry-run`; details in
-  `cli/DISCREPANCIES.md` #1 and #8.
+- **SDK pin.** The CLI pins `@terminal3/t3n-sdk` 5.2.0: testnet's trust manifest
+  (version 1787800421, signed 2026-08-27) has no `rtmr1_allowlist`, which 5.3.0 and later
+  require, so on those versions `fetchTrustedManifest` fails and no session can be opened
+  with verified attestation. With 5.2.0 everything in section 6 ran live under the default
+  `T3N_TRUST=manifest`. Upgrade condition: when the node publishes `rtmr1_allowlist`,
+  move to the latest SDK (`doctor` shows the manifest fields and warns when the installed
+  SDK is not the pinned one). `T3N_TRUST=unsafe` is a debug switch only and is refused on
+  production. Details: `docs/BUGS.md` #0, `cli/DISCREPANCIES.md` #1.
 
-## 7. Contact and maintenance
+## 8. Contact and maintenance
 
 We hand the contract, CLI and documentation over to Terminal 3 to host, distribute and
 operate under a Terminal 3 tenant. We are happy to keep maintaining it (register

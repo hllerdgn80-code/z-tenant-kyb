@@ -9,6 +9,7 @@ interface AuthorizeOptions {
   agentDid?: string;
   script?: string;
   host?: string[];
+  allowDemoErp?: boolean;
 }
 
 function buildGrant(cfg: Config, scriptName: string, erpUrl: string, extraHosts: readonly string[]): AgentAuthScriptGrant {
@@ -51,4 +52,5 @@ export const authorizeCommand = new Command("authorize")
   .option("--agent-did <did>", "skip the agent session and grant to this DID")
   .option("--script <name>", "z:<tid>:<tail> override (default: cli/.kyb-state.json / SCRIPT_NAME)")
   .option("--host <host...>", "extra egress host(s) to allow")
-  .action((opts: AuthorizeOptions) => runCommand((cfg) => authorize(cfg, opts)));
+  .option("--allow-demo-erp", "let a live run grant egress to a public echo host (httpbin.org, postman-echo.com, webhook.site) — it receives the resolved signatory data; throwaway identities only")
+  .action((opts: AuthorizeOptions) => runCommand((cfg) => authorize(cfg, opts), { allowDemoErp: opts.allowDemoErp }));

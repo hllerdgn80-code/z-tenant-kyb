@@ -1,5 +1,5 @@
 import { RpcError } from "@terminal3/t3n-sdk";
-import { loadConfig, type Config } from "./env.js";
+import { loadConfig, type Config, type ConfigOverrides } from "./env.js";
 
 /** Substring → actionable hint. Matched against the error chain and the node's `detail` only (common-errors.md + SDK d.ts notes). */
 const HINTS: ReadonlyArray<readonly [RegExp, string]> = [
@@ -73,10 +73,10 @@ export function explainError(e: unknown, secrets: Secrets = []): string {
 }
 
 /** Load the config and run a command body; any failure prints a clear explanation to stderr and sets exit code 1. */
-export async function runCommand(body: (cfg: Config) => Promise<void>): Promise<void> {
+export async function runCommand(body: (cfg: Config) => Promise<void>, overrides: ConfigOverrides = {}): Promise<void> {
   let cfg: Config | undefined;
   try {
-    cfg = loadConfig();
+    cfg = loadConfig(overrides);
     await body(cfg);
   } catch (e) {
     process.stderr.write(`error: ${explainError(e, secretsOf(cfg))}\n`);

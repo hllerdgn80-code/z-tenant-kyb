@@ -27,9 +27,9 @@ keep maintaining it.
 
 1. **TEE contract** (`wit/world.wit`, `src/`): world `z:tenant-kyb@0.1.0` importing
    `tenant-context`, `logging`, `kv-store`, `http`, `http-with-placeholders`; exports
-   `screen-vendor` and `submit-onboarding`. 19 native unit tests cover the parsers, the
+   `screen-vendor` and `submit-onboarding`. 24 native unit tests cover the parsers, the
    PII guard, risk scoring and the ERP body builder. Build: `cargo build --target
-   wasm32-wasip2 --release` -> 154 KB component, validated with `wasm-tools`.
+   wasm32-wasip2 --release` -> 160 KB component, validated with `wasm-tools`.
 2. **PII model**: inline person fields are rejected at parse time; the signatory reaches
    the ERP only through `{{profile.first_name}}` / `{{profile.last_name}}` markers
    (nested e-mail marker opt-in); the ERP response body is never echoed; logs carry
@@ -71,13 +71,13 @@ Where the docs and the shipped artefacts disagreed we followed the artefacts (WI
 All captured on 2026-09-04 against **testnet** (node `cn-api.sg.testnet.t3n.terminal3.io`) with the tenant key claimed from the ADK community page. Text logs are in `docs/run-logs/`, rendered images in `docs/screenshots/`.
 
 1. `kyb doctor` — toolchain, WASM component check, VIES/GLEIF reachability, node `/status`, trust-manifest field check (warns: `rtmr1_allowlist` missing), tenant/agent/user sessions authenticated, tenant admitted — `15 ok, 2 warn, 0 failed`.
-2. `cargo test --target x86_64-apple-darwin --lib` — all native tests pass; `cargo build --target wasm32-wasip2 --release` — 154 KB (157,768 byte) component; `wasm-tools component wit` — the five `host:*` imports and the `z:tenant-kyb/contracts@0.1.0` export.
+2. `cargo test --target x86_64-apple-darwin --lib` — all native tests pass; `cd cli && npm test` — 56 vitest unit tests for the CLI helpers (key classification, secret redaction, ERP echo-host guard, error hints) pass; `cargo build --target wasm32-wasip2 --release` — 160 KB (163,671 byte) component; `wasm-tools component wit` — the five `host:*` imports and the `z:tenant-kyb/contracts@0.1.0` export.
 3. `kyb deploy` — `registered z:07974b90…:kyb @ 0.1.0 → contract_id 879`, private `secrets` map created with `{ only: [879] }` ACL, `erp_onboarding_url` seeded.
 4. `kyb authorize` — `agent-auth-update` grant for `screen-vendor`, `submit-onboarding`, allowedHosts `ec.europa.eu, api.gleif.org, httpbin.org`. (First attempt with a separate, unfunded user identity: `InsufficientCredit … available=0` — see bugs.)
 5. `kyb screen --country IE --vat 6388047V --name "Google Ireland Limited"` — executed inside the enclave: VIES `valid=true`, GLEIF LEI `YYPPRNO5HB304LHFVG31`, `risk_flags: []`.
 6. `kyb screen --country DE --vat 000000000 --name "Nonexistent GmbH"` — `risk_flags: ["VAT_INVALID", "LEI_NOT_FOUND"]`.
 7. `kyb onboard --vendor-id V-GOOGLE-IE --screening-ref scr-2026-09-04-001` — `{{profile.first_name}}`/`{{profile.last_name}}` resolved host-side, ERP POST → `status: submitted, http_code: 200, erp_reference: Root=1-…` (the ERP echo body is never returned to the caller).
-8. `kyb logs` — contract log lines from inside the TEE (no PII), `kyb audit` — audit read as the agent.
+8. `kyb logs` — contract log lines from inside the TEE (no PII), `kyb audit` — audit read as the agent (it returned an empty batch list on this self-call).
 9. The repository itself is public and needs no screenshot to verify — open
    https://github.com/hllerdgn80-code/z-tenant-kyb and the `docs/` folder is the
    source of every image above (`docs/screenshots/`, rendered from `docs/run-logs/`).
@@ -87,7 +87,7 @@ All captured on 2026-09-04 against **testnet** (node `cn-api.sg.testnet.t3n.term
 Full list with file/line evidence and suggested fix text in `docs/BUGS.md`. Headlines:
 
 0. **SDK ≥ 5.3.0 cannot open a session on testnet** — `fetchTrustedManifest("testnet")` rejects the served trust manifest (version 1787800421, signed 2026-08-27) because it has no `rtmr1_allowlist`. Bisected: 5.2.0 works, 5.3.0 / 5.4.0 / 5.5.0 / 5.8.0 / 5.10.0 fail with the same "malformed" error. Every documented flow (quickstart onward) fails at step one on the latest SDK; our CLI pins 5.2.0 and keeps verified attestation. Fix: publish `rtmr1_allowlist` in the testnet manifest, or let the SDK accept manifests that predate the field (as `manifestToTrustAnchor` already does). Details: `cli/DISCREPANCIES.md` #1.
-0b. **Separate agent/user identities start with 0 credits and the claim page issues one key per Google account** — the docs say "get the agent its own key from the claim page", but the page is Google-SSO only and rate-limited to one signup per e-mail, so a second identity cannot be funded without a second Google account or a manual top-up (`InsufficientCredit … required=10000000000 available=0`, request_id `d0198fc4-b543-4cbf-a25c-41c3ff0cb600`). We used the documented self-grant path for the demo.
+0b. **Separate agent/user identities start with 0 credits and the claim page issues one key per Google account** — the docs say "get the agent its own key from the claim page", but the page appears to issue one key per e-mail via Google SSO (observed with our single account and reported by other entrants; not verified beyond one account), so a second identity cannot be funded without a second account or a manual top-up (`InsufficientCredit … required=10000000000 available=0`, request_id `d0198fc4-b543-4cbf-a25c-41c3ff0cb600`). We used the documented self-grant path for the demo.
 
 1. The reference contract and the placeholder guide use the nested marker
    `{{profile.verified_contacts.email.value}}`, but the host WIT shipped with it says
@@ -115,6 +115,8 @@ We hand z-tenant-kyb over to Terminal 3 to host and distribute under its own ten
 upgrade/logs, limitations). We are happy to keep maintaining it through pull requests.
 The design keeps maintenance boring on purpose: no third-party API keys, pure functions
 with fixture tests for every parser, one secret to change to point at a real ERP.
+
+What was and was not exercised: the live run used one identity for tenant, agent and data owner (self-grant, `pii_did` = the caller's own DID) because separately generated identities start with zero credits. The delegated path — agent DID ≠ data-owner DID, `pii_did` set to the owner, placeholders resolved from another profile, egress via the owner's grant — is untested, as is the no-grant failure (expected `host/http.egress_denied` / `PlaceholderNoUserContext`). `docs/HANDOVER.md` section 6 has the full list.
 
 ## Time to submit
 

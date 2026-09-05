@@ -1,22 +1,32 @@
-# Discrepancies: docs vs `@terminal3/t3n-sdk` 5.10.0 vs testnet
+# Discrepancies: docs vs `@terminal3/t3n-sdk` (5.10.0 reviewed, 5.2.0 pinned) vs testnet
 
 Recorded while building the operator CLI on 2026-09-04. "docs" = the ADK pages (quickstart,
 set-up-dev-env, create-kv-maps, agent-auth-adk, common-errors, outbound-http-auth-by-user,
-what-is-z-namespace, adk-tour). "d.ts" = `node_modules/@terminal3/t3n-sdk/dist/index.d.ts`, which
-the task defines as ground truth. Where they disagree the CLI follows the d.ts. Items 1–3 are
-blockers or near-blockers; the rest are paper cuts that cost time.
+what-is-z-namespace, adk-tour). "d.ts" = `node_modules/@terminal3/t3n-sdk/dist/index.d.ts` of
+**5.10.0**, which the task defines as ground truth; the CLI runs on **5.2.0** (item 1). Where they
+disagree the CLI follows the d.ts. This is the short, CLI-facing list; the long form with file/line
+evidence, suggested fix text and a status per item is `docs/BUGS.md`:
 
-## 1. BLOCKER — testnet's trust manifest is rejected by SDK 5.10.0
+| here | `docs/BUGS.md` | here | `docs/BUGS.md` |
+|---|---|---|---|
+| #1 trust manifest | #0 | #7 map ACL order | #12 |
+| #2 grant casing | #2 | #8 admission / credits | #0b |
+| #3 `pii_did` | #5 | #9 TenantClient config | #4 |
+| #4 key shapes | #7 | #10 audit / logs | #10, #13 |
+| #5 env names | #3 | #11 placeholders | #1 |
+| #6 `map-entry-set` | #9 | #12 environment notes | -- |
+
+## 1. Testnet's trust manifest is rejected by SDK >= 5.3.0 (worked around: pinned 5.2.0)
 
 - `fetchTrustedManifest("testnet")` (and `resolveTrustAnchor("testnet")`) throw
   `Trust manifest at https://cn-api.sg.testnet.t3n.terminal3.io/api/trust-manifest is malformed.`
 - The served document (`GET /api/trust-manifest`, `version: 1787800421`, `signed_at: 2026-08-27T03:13:41Z`)
   has the keys `cluster, version, peer_ids, rtmr3_allowlist, signed_at, signature` — **no `rtmr1_allowlist`**,
   which `SignedTrustManifest` in the d.ts declares as required ("the real rootfs signal").
-- Consequences: the quickstart's `new T3nClient({ trustAnchor: await fetchTrustedManifest("testnet"), … })`
-  can never be constructed, so **every** documented flow (quickstart, TenantClient, register, agent auth,
-  invoke) fails at step one with the current SDK on testnet.
-- No verified workaround exists in the SDK: `manifestToTrustAnchor(served)` accepts the document, but the
+- Consequences on 5.3.0+: the quickstart's `new T3nClient({ trustAnchor: await fetchTrustedManifest("testnet"), … })`
+  cannot be constructed, so **every** documented flow (quickstart, TenantClient, register, agent auth,
+  invoke) fails at step one with the latest SDK on testnet. On 5.2.0 it works (bisection below).
+- No client-side workaround exists on 5.3.0+: `manifestToTrustAnchor(served)` accepts the document, but the
   `T3nClient` constructor then rejects the projected anchor
   (`trustAnchor … must be either a TrustAnchor ({ expected_peer_ids, rtmr3_allowlist, rtmr1_allowlist })`),
   also with `rtmr1_allowlist: []`. `verifyManifestSignature()` needs the operator key, and
@@ -25,8 +35,8 @@ blockers or near-blockers; the rest are paper cuts that cost time.
   constructor accepts the anchor and `handshake()` then fails at attestation with
   `DKG attestation verification failed … rtmr1_allowlist base64 decode: Invalid padding`. So a real allowlist
   value published by the operator is the only strict-mode fix; nothing client-side can substitute for it.
-- What does work: `{ unsafe_trust_server: true }` — handshake completes in ~1 s. The node itself is healthy
-  (`/status` → 200). So the fix is on the operator side (publish a manifest with `rtmr1_allowlist`) or in the
+- Before the bisection we confirmed the node itself is healthy: `/status` → 200, and `{ unsafe_trust_server: true }`
+  completes a handshake in ~1 s. The fix is on the operator side (publish a manifest with `rtmr1_allowlist`) or in the
   SDK (accept manifests that predate the field, as `manifestToTrustAnchor` already does).
 - **Regression bisected (2026-09-04):** `fetchTrustedManifest("testnet")` succeeds on **5.2.0** (returns
   `expected_peer_ids, rtmr3_allowlist, source`) and fails on **5.3.0, 5.4.0, 5.5.0, 5.8.0, 5.10.0** with the same
@@ -36,7 +46,8 @@ blockers or near-blockers; the rest are paper cuts that cost time.
   the `agent-auth-update` grant, `screen-vendor` (VIES + GLEIF called from inside the enclave) and `submit-onboarding`
   (placeholders resolved, ERP echo HTTP 200) all succeeded on testnet on 2026-09-04.
 - CLI: `T3N_TRUST=manifest` (default, strict) vs `T3N_TRUST=unsafe` (explicit, logged, refused on production);
-  `kyb doctor` reports the missing fields.
+  `kyb doctor` reports the missing fields and warns when the installed SDK differs from the pin. Upgrade condition:
+  move to the latest SDK once the node publishes `rtmr1_allowlist`.
 
 ## 2. Agent grant: contract, casing and deprecation differ
 
@@ -60,15 +71,18 @@ blockers or near-blockers; the rest are paper cuts that cost time.
   `function_name`, optional `pii_did`, `input`. `contract_version` is missing from the docs' example.
 - `pii_did` is also missing from the docs, yet outbound-http-auth-by-user says egress is resolved from the
   **subject user's** grant on a delegated call, and `http-with-placeholders` needs a user context. Without
-  `pii_did` the agent's call is a self call → `egress_denied` / `PlaceholderNoUserContext`.
-- CLI: sends `contract_version = CONTRACT_VERSION` and `pii_did = <data owner DID>`.
+  `pii_did` the agent's call is a self call; the expected failure is `egress_denied` / `PlaceholderNoUserContext`
+  (expected from the WIT / d.ts, not observed — our live run always sent `pii_did`).
+- CLI: sends `contract_version = CONTRACT_VERSION` and `pii_did = <data owner DID>`. Live, `pii_did` equalled the
+  caller's own DID (one identity for all roles); a `pii_did` of another user is untested (`docs/HANDOVER.md` section 6).
 
 ## 4. Two different things are called "API key"
 
 - quickstart / agent-auth: `eth_get_address(T3N_API_KEY)` → the key is a 64-hex secp256k1 private key.
 - d.ts `invoke()` / `discoverWhoami()` / `InvokeOptions.apiKey`: "the agent's opaque API key (`t3n_key_<…>`)",
   relayed in `X-T3N-Api-Key`; `eth_get_address("t3n_key_…")` throws `Invalid Ethereum private key`.
-- The claim page is not in the local docs, so which shape it issues is unknown until a key is claimed.
+- The claim page is not in the local docs. Observed 2026-09-04: the key it issued is a 0x-prefixed 64-hex private key
+  (`doctor`: "66 chars, eth-private-key"), i.e. the quickstart's shape; when a `t3n_key_…` token is issued is still unknown.
 - CLI: classifies each key (`eth-private-key` | `t3n-api-key`) and routes `screen`/`onboard`/`authorize` accordingly.
 
 ## 5. Environment names
@@ -76,7 +90,7 @@ blockers or near-blockers; the rest are paper cuts that cost time.
 - SDK README: environments are `sandbox | production`, example `fetchTrustedManifest("sandbox", { baseUrl })`.
 - quickstart: `setEnvironment("testnet")`; d.ts `Environment = "sandbox" | "testnet" | "production"`;
   `NODE_URLS` maps **sandbox and testnet to the same host** (`cn-api.sg.testnet.t3n.terminal3.io`).
-- `fetchTrustedManifest("sandbox")` fails identically to item 1.
+- `fetchTrustedManifest("sandbox")` fails identically to item 1 on SDK >= 5.3.0.
 
 ## 6. Seeding secrets: raw control call vs typed helper
 
@@ -116,8 +130,10 @@ blockers or near-blockers; the rest are paper cuts that cost time.
 ## 10. Audit / logs
 
 - agent-auth: `getAuditEvents` "unverified". d.ts declares it (`audit.get-mine`, sealed, `{ pii_did?, limit?, cursor? }`)
-  plus a separate org-scoped `getActivityLog`. CLI guards with a runtime `typeof` check.
+  plus a separate org-scoped `getActivityLog`. CLI guards with a runtime `typeof` check. Live: it works and returned
+  `{"batches":[],"next_cursor":null}` on a self-call (`docs/run-logs/audit.txt`).
 - `contracts.logs()` returns nothing unless the tenant quota `log_max_entries` is non-zero — only the d.ts says so.
+  Live: our freshly claimed testnet tenant got 10 entries back without any quota change (`docs/run-logs/logs.txt`).
 
 ## 11. Placeholders
 
@@ -137,11 +153,17 @@ blockers or near-blockers; the rest are paper cuts that cost time.
 
 - Verified offline: SDK loads under Node 26.7; `loadWasmComponent()` with no arguments; all exports used by the
   CLI exist at runtime; `toAgentAuthUpdateWire` output; `eth_get_address` rejects `t3n_key_…`.
-- Verified against testnet: `/status` 200; manifest shape (item 1); handshake with `unsafe_trust_server`; handshake
-  refused with the projected manifest anchor and with a dummy `rtmr1_allowlist`.
-- Verified against testnet with arbitrary (unclaimed) secp256k1 keys under `unsafe_trust_server`: `authenticate`
-  (a DID per key), `getAuditEvents` (`{"batches":[],"next_cursor":null}`), and the execute dispatch up to contract-id
-  validation (`-32601 tenant contract z:0000…:kyb not registered`, request_id `6d25b431-8e2e-41cf-a0f3-5c05f37c4c6b`;
-  `-32602 z: <tid> must be 40 lowercase hex chars, got 8`, request_id `13978ad5-…`).
-- Blocked by credits only: `tenant.me()` / `contracts.logs` → `InsufficientCredit` (item 8).
-- Not verified (needs a credited key): `register`, maps, `updateAgentAuth`, a contract call that actually runs.
+- Verified against testnet without keys: `/status` 200; manifest shape (item 1); on 5.10.0 the handshake is refused
+  with the projected manifest anchor and with a dummy `rtmr1_allowlist`.
+- Verified live on testnet, 2026-09-04, SDK 5.2.0, `T3N_TRUST=manifest`, claimed tenant key (logs in
+  `docs/run-logs/`): `doctor`; `deploy` (`contracts.register` → contract_id 879, `maps.create` + `entrySet`);
+  `authorize` (`updateAgentAuth`); `screen` (VIES + GLEIF from inside the enclave, a valid and an invalid vendor);
+  `onboard` (placeholders resolved, echo ERP HTTP 200); `logs` (10 entries); `audit` (empty batch list).
+- Verified only up to the node's validation, with unclaimed keys earlier the same day: the execute dispatch checks
+  the contract id (`-32601 tenant contract z:0000…:kyb not registered`, request_id
+  `6d25b431-8e2e-41cf-a0f3-5c05f37c4c6b`; `-32602 z: <tid> must be 40 lowercase hex chars, got 8`), and `tenant.me()`
+  on an unclaimed key is `InsufficientCredit` (item 8).
+- Assumed, not exercised: the delegated path with three distinct identities (agent DID != data-owner DID,
+  `pii_did` = the owner, placeholders from another profile); the no-grant failure (`egress_denied` /
+  `PlaceholderNoUserContext`); the nested e-mail marker; an `erp_api_key` bearer; a real ERP. See
+  `docs/HANDOVER.md` section 6.

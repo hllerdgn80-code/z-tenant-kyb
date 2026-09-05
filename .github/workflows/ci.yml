@@ -7,6 +7,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - name: Version drift (Cargo.toml = src/lib.rs = wit/world.wit = CLI default)
+        run: bash scripts/check-versions.sh
       - uses: dtolnay/rust-toolchain@stable
         with: { targets: wasm32-wasip2 }
       - uses: Swatinem/rust-cache@v2
@@ -33,5 +35,7 @@ jobs:
         with: { node-version: 22, cache: npm, cache-dependency-path: cli/package-lock.json }
       - run: npm ci
       - run: npm run typecheck
+      - name: CLI unit tests (vitest)
+        run: npm test
       - name: Offline smoke (no keys, no network)
         run: npx tsx src/index.ts doctor --offline

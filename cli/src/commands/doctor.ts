@@ -25,6 +25,7 @@ interface Check {
 interface DoctorOptions {
   offline?: boolean;
   timeout: number;
+  allowDemoErp?: boolean;
 }
 
 const EXPECTED_SDK = "5.2.0"; // last version whose fetchTrustedManifest() accepts testnet's manifest (5.3.0+ require rtmr1_allowlist — DISCREPANCIES.md #1)
@@ -87,14 +88,15 @@ function envChecks(cfg: Config): Check[] {
         : check(KEY_VARS[field], "skip", `not set — needed by: ${KEY_USED_BY[field]}`),
     );
   }
+  // One identity playing tenant + agent (or tenant + data owner) is a testnet demo shortcut, never a production setup.
+  const sameKeyStatus: Status = cfg.env === "production" ? "fail" : "warn";
   if (cfg.t3nApiKey && cfg.t3nApiKey === cfg.agentKey) {
-    out.push(check("AGENT_KEY", "warn", "equals T3N_API_KEY — the agent must be its own identity with its own credits"));
+    out.push(check("AGENT_KEY", sameKeyStatus, `equals T3N_API_KEY — the agent must be its own identity with its own credits${cfg.env === "production" ? " (refused on production)" : ""}`));
   }
-  out.push(
-    cfg.erpUrlIsDemoDefault
-      ? check("ERP_ONBOARDING_URL", "warn", `not set — --dry-run and doctor fall back to the demo echo ${cfg.erpOnboardingUrl}; a live \`deploy\` / \`authorize\` refuses to run without it`)
-      : check("ERP_ONBOARDING_URL", "ok", `${cfg.erpOnboardingUrl} (allowed host: ${hostOf(cfg.erpOnboardingUrl)})`),
-  );
+  if (cfg.t3nApiKey && cfg.t3nApiKey === cfg.userKey) {
+    out.push(check("USER_KEY", sameKeyStatus, `equals T3N_API_KEY — the data owner whose profile is substituted must not be the tenant${cfg.env === "production" ? " (refused on production)" : ""}`));
+  }
+  out.push(erpUrlCheck(cfg));
   out.push(check("ERP_API_KEY", cfg.erpApiKey ? "ok" : "skip", cfg.erpApiKey ? describeSecret(cfg.erpApiKey) : "not set — optional bearer for the ERP"));
   const st = readState();
   out.push(
@@ -105,6 +107,23 @@ function envChecks(cfg: Config): Check[] {
     ),
   );
   return out;
+}
+
+function erpUrlCheck(cfg: Config): Check {
+  const name = "ERP_ONBOARDING_URL";
+  if (cfg.erpUrlIsDemoDefault) {
+    return check(name, "warn", `not set — --dry-run and doctor fall back to the demo echo ${cfg.erpOnboardingUrl}; a live \`deploy\` / \`authorize\` refuses to run without it`);
+  }
+  const host = hostOf(cfg.erpOnboardingUrl);
+  if (!cfg.erpHostIsDemoEcho) return check(name, "ok", `${cfg.erpOnboardingUrl} (allowed host: ${host})`);
+  if (cfg.allowDemoErp) {
+    return check(name, "warn", `${cfg.erpOnboardingUrl} is a public echo service, allowed by --allow-demo-erp / KYB_ALLOW_DEMO_ERP=1 — it receives the resolved signatory data; throwaway identities only`);
+  }
+  return check(
+    name,
+    cfg.env === "production" ? "fail" : "warn",
+    `${cfg.erpOnboardingUrl} is a public echo service — a live \`deploy\` / \`authorize\` refuses it: the echo target receives the resolved signatory data. Pass --allow-demo-erp (or set KYB_ALLOW_DEMO_ERP=1) with a throwaway demo identity only`,
+  );
 }
 
 async function fetchJson(url: string, init: RequestInit, timeoutMs: number): Promise<{ status: number; body: unknown }> {
@@ -255,4 +274,5 @@ export const doctorCommand = new Command("doctor")
   .description("Check toolchain, WASM artifact, env vars (masked), VIES/GLEIF reachability and the T3N handshake for every configured key")
   .option("--offline", "skip every network check")
   .option("--timeout <ms>", "per-request timeout for the register/node probes", (v) => Number.parseInt(v, 10), 10_000)
-  .action((opts: DoctorOptions) => runCommand((cfg) => doctor(cfg, opts)));
+  .option("--allow-demo-erp", "evaluate ERP_ONBOARDING_URL as a live run with --allow-demo-erp would")
+  .action((opts: DoctorOptions) => runCommand((cfg) => doctor(cfg, opts), { allowDemoErp: opts.allowDemoErp }));
